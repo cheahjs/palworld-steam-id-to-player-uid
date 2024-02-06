@@ -27,8 +27,7 @@ watch(steamId, async (newVal, oldVal) => {
     <input v-model="steamId" type="text" placeholder="Enter your Steam ID" /><br />
     <pre v-if="steamId">
 Steam ID: {{ steamId }}
-Palworld Player UID (Hex) - Save Files: {{ playerUid }}
-Palworld Player UID (Decimal) - RCON: {{ playerUidDecimal }}</pre
-    >
+Palworld Player UID (Hex - Save Files): {{ playerUid }}
+Palworld Player UID (Decimal - RCON): {{ playerUidDecimal }}</pre>
   </div>
 </template>
