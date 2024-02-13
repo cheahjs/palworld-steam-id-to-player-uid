@@ -1,24 +1,19 @@
 <script setup lang="ts">
-import Form from './components/Form.vue'
+import SteamToPal from './components/SteamToPal.vue';
+import PalToSteam from './components/PalToSteam.vue';
 </script>
 
 <template>
-  <h1>Palworld Steam to Player UID Generator</h1>
+  <header>
+    <h1>Palworld Steam&lt;&gt;Player UID Converter</h1>
+  </header>
+  <hr/>
   <div id="app">
-    <Form />
+    <SteamToPal />
+    <hr>
+    <PalToSteam />
   </div>
-  <div class="footer">
+  <footer>
     <p><a href="https://github.com/cheahjs/palworld-steam-id-to-player-uid">Source Code</a></p>
-  </div>
+  </footer>
 </template>
-
-<style scoped>
-.footer {
-  position: fixed;
-  left: 0;
-  bottom: 0;
-  width: 100%;
-  text-align: center;
-  background-color: cadetblue;
-}
-</style>
