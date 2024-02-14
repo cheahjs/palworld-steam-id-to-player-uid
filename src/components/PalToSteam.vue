@@ -16,7 +16,7 @@ const webgpuProgress = ref({ current: 0, start: 0, end: 0 })
 const webgpuDeviceName = ref('')
 
 const steamAccountIdToString = (accountId: number) => {
-  return Long.fromBits(accountId, 17825793, true).toString()
+  return (BigInt(accountId) + 76561197960265728n).toString()
 }
 
 const playerUidToSteamId = async () => {
@@ -121,10 +121,10 @@ const webgpuBruteForce = async (target: number) => {
     ],
   });
 
+  // Generate input data
+  await generateInitialInputBuffer(mappedWorkBuffer, 0, TOTAL_INVOCATIONS_PER_DISPATCH)
+
   for (let i = 0; i < TOTAL_DISPATCHES; i++) {
-    console.log('Dispatch', i + 1, 'of', TOTAL_DISPATCHES)
-    // Generate input data
-    await generateInputBuffer(mappedWorkBuffer, i * TOTAL_INVOCATIONS_PER_DISPATCH, (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH)
     // Encode commands to do the computation
     const encoder = device.createCommandEncoder();
     // Copy the mapped buffer to the work buffer
@@ -146,22 +146,28 @@ const webgpuBruteForce = async (target: number) => {
     await device.queue.onSubmittedWorkDone();
 
     // Read the results
-    await stagingResultBuffer.mapAsync(GPUMapMode.READ);
-    const result = new Uint32Array(stagingResultBuffer.getMappedRange().slice(0));
-    stagingResultBuffer.unmap();
-    for (let j = 0; j < result.length; j++) {
-      if (result[j] != 0) {
-        console.log('Steam ID found at', steamAccountIdToString(i * TOTAL_INVOCATIONS_PER_DISPATCH + j), result[j])
-        foundSteamIds.value.push(i * TOTAL_INVOCATIONS_PER_DISPATCH + j)
+    let resultPromise = stagingResultBuffer.mapAsync(GPUMapMode.READ).then(() => {
+      const result = new Uint32Array(stagingResultBuffer.getMappedRange().slice(0));
+      stagingResultBuffer.unmap();
+      for (let j = 0; j < result.length; j++) {
+        if (result[j] != 0) {
+          console.log('Steam ID found at', steamAccountIdToString(i * TOTAL_INVOCATIONS_PER_DISPATCH + j), result[j])
+          foundSteamIds.value.push(i * TOTAL_INVOCATIONS_PER_DISPATCH + j)
+        }
       }
-    }
+    });
+
+    // Start prepping the next buffer
+    let nextBufferPromise = generateInputBuffer(mappedWorkBuffer, i * TOTAL_INVOCATIONS_PER_DISPATCH, (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH)
+
+    await Promise.all([resultPromise, nextBufferPromise])
 
     const progress = { current: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH, start: 0, end: TOTAL_INVOCATIONS_PER_DISPATCH * TOTAL_DISPATCHES }
     webgpuProgress.value = progress
   }
 }
 
-const generateInputBuffer = async (buffer: GPUBuffer, start: number, end: number) => {
+const generateInitialInputBuffer = async (buffer: GPUBuffer, start: number, end: number) => {
   await buffer.mapAsync(GPUMapMode.WRITE);
   const data = new DataView(buffer.getMappedRange());
   for (let i = 0; i < (end - start); i++) {
@@ -169,10 +175,19 @@ const generateInputBuffer = async (buffer: GPUBuffer, start: number, end: number
     for (let j = 0; j < 17; j++) {
       data.setUint8((i * 36) + (j * 2), steamId.charCodeAt(j))
     }
-    data.setUint16((i * 36) + 34, 0)
-    // console.log('Generated input for', i, steamId, data.buffer.slice(i * 36, (i + 1) * 36))
   }
+  buffer.unmap();
+}
 
+const generateInputBuffer = async (buffer: GPUBuffer, start: number, end: number) => {
+  await buffer.mapAsync(GPUMapMode.WRITE);
+  const data = new DataView(buffer.getMappedRange());
+  for (let i = 0; i < (end - start); i++) {
+    let steamId = steamAccountIdToString(start + i)
+    for (let j = 7; j < 17; j++) {
+      data.setUint8((i * 36) + (j * 2), steamId.charCodeAt(j))
+    }
+  }
   buffer.unmap();
 }
 
