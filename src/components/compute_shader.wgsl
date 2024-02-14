@@ -1,9 +1,11 @@
+// input buffer is 34 bytes long, encoded as a 9x4 array of u32 values
 @group(0) @binding(0) var<storage, read> input_data: array<array<u32, 9>>;
 // each bit represents if the input hashes to the target
-@group(0) @binding(1) var<storage, read_write> output_result: array<atomic<u32>>;
+@group(0) @binding(1) var<storage, read_write> output_result: array<u32>;
 @group(0) @binding(2) var<storage, read> target_hash: u32;
+// @group(0) @binding(3) var<storage, read_write> debug_output: array<u32>;
  
-@compute @workgroup_size(1)fn main(
+@compute @workgroup_size(64)fn main(
     @builtin(global_invocation_id) id: vec3<u32>
 ) {
     let i = id.x;
@@ -47,17 +49,17 @@
     // b = ShiftMix((z + a) * mul + d + h) * mul;
     b = mul_u64_u64(ShiftMix(add_u64_u64(mul_u64_u64(add_u64_u64(z, a), mul), add_u64_u64(d, h))), mul);
     // return b + x;
-    let result = add_u64_u64(b, x);
+    let result: u64 = add_u64_u64(b, x);
     // Perform Unreal's compression
-    let hash = result.x + (result.y * 23);
+    let hash: u32 = result.x + (result.y * 23);
 
     // Check if the hash is the target
-    if (hash == target_hash) {
-        let ipos: u32 = i / 4u;
-        let shift: u32 = 8u * (i % 4u);
-        let bit_set: u32 = 1u << shift;
-        atomicOr(&output_result[ipos], bit_set);
-    }
+    let init_bit: u32 = select(0u, 1u, hash == target_hash);
+    // let ipos: u32 = i / 4u;
+    // let shift: u32 = 8u * (i % 4u);
+    // let bit_set: u32 = init_bit << shift;
+    // atomicOr(&output_result[ipos], bit_set);
+    output_result[i] = init_bit;
 }
 
 fn ShiftMix(val: u64) -> u64 {
@@ -69,11 +71,14 @@ fn bswap_64(val: u64) -> u64 {
 }
 
 fn bswap(val: u32) -> u32 {
-    return (val >> 24u) | ((val >> 8u) & 0xFF00u) | ((val << 8u) & 0xFF0000u) | (val << 24u);
+    return ((val & 0xff000000u) >> 24u) | ((val & 0x00ff0000u) >> 8u) | ((val & 0x0000ff00u) << 8u) | ((val & 0x000000ffu) << 24u);
 }
 
 fn Rotate(val: u64, shift: u32) -> u64 {
-    return or_u64_u64(left_shift_u64(val, shift), right_shift_u64(val, 64u - shift));
+    return or_u64_u64(
+        right_shift_u64(val, shift),
+        left_shift_u64(val, 64u - shift)
+    );
 }
 
 fn Fetch64(idx: u32, offset: u32) -> u64 {
@@ -161,34 +166,30 @@ fn u32x2_to_u64(low: u32, high: u32) -> u64 {
     return vec2(low, high);
 }
 
-fn left_shift_u64( a: u64, b: u32 ) -> u64 {
-  if ( b == 0u ) {
-    return a;
-  }
-  else if ( b < 32u ) {
-    return vec2( a.x << b, ( a.y << b ) | ( a.x >> ( 32u - b ) ) );
-  }
-  else {
-    return vec2( 0u, a.x << ( b - 32u ) );
-  }
+fn left_shift_u64(a: u64, b: u32) -> u64 {
+    if b == 0u {
+        return a;
+    } else if b < 32u {
+        return vec2(a.x << b, (a.y << b) | (a.x >> (32u - b)));
+    } else {
+        return vec2(0u, a.x << (b - 32u));
+    }
 }
 
-fn right_shift_u64( a: u64, b: u32 ) -> u64 {
-  if ( b == 0u ) {
-    return a;
-  }
-  else if ( b < 32u ) {
-    return vec2( ( a.x >> b ) | ( a.y << ( 32u - b ) ), a.y >> b );
-  }
-  else {
-    return vec2( a.y >> ( b - 32u ), 0u );
-  }
+fn right_shift_u64(a: u64, b: u32) -> u64 {
+    if b == 0u {
+        return a;
+    } else if b < 32u {
+        return vec2((a.x >> b) | (a.y << (32u - b)), a.y >> b);
+    } else {
+        return vec2(a.y >> (b - 32u), 0u);
+    }
 }
 
-fn or_u64_u64( a: u64, b: u64 ) -> u64 {
-  return vec2( a.x | b.x, a.y | b.y );
+fn or_u64_u64(a: u64, b: u64) -> u64 {
+    return vec2(a.x | b.x, a.y | b.y);
 }
 
-fn xor_u64_u64( a: u64, b: u64 ) -> u64 {
-  return vec2( a.x ^ b.x, a.y ^ b.y );
+fn xor_u64_u64(a: u64, b: u64) -> u64 {
+    return vec2(a.x ^ b.x, a.y ^ b.y);
 }
