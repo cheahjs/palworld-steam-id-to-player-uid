@@ -9,8 +9,10 @@ import PalToSteam from './components/PalToSteam.vue'
   </header>
   <hr />
   <div id="app">
-    <p>This only works for servers that translate Steam IDs into Player UIDs. There are configurations that convert a
-      different ID which this tool does not currently support.</p>
+    <p>
+      This only works for servers that translate Steam IDs into Player UIDs. There are
+      configurations that convert a different ID which this tool does not currently support.
+    </p>
     <SteamToPal />
     <hr />
     <PalToSteam />

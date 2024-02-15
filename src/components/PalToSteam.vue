@@ -118,7 +118,7 @@ const webgpuBruteForce = async (target: number) => {
     outputBuffer.size
   )
   // create a buffer on the GPU to hold our target hash
-  const targetHashBuffer = createOnGpuBuffer(device, 'target_hash', 4)
+  const targetHashBuffer = createUniformBuffer(device, 'target_hash', 4)
   device.queue.writeBuffer(targetHashBuffer, 0, new Uint32Array([target]))
 
   // Setup a bindGroup to tell the shader which buffer to use for the computation
@@ -221,6 +221,19 @@ const createOnGpuBuffer = (device: GPUDevice, label: string, size: number) => {
   })
 }
 
+// Create a buffer for var<uniform> on the GPU
+const createUniformBuffer = (device: GPUDevice, label: string, size: number) => {
+  // Align to 4 bytes
+  if (size % 4 != 0) {
+    size += 4 - (size % 4)
+  }
+  return device.createBuffer({
+    label: label,
+    size: size,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
+  })
+}
+
 // Create a mapped buffer on the GPU
 const createOnGpuMapped = (device: GPUDevice, label: string, size: number) => {
   // Align to 4 bytes
@@ -263,11 +276,15 @@ const resetState = () => {
 
 <template>
   <div>
-    <h2>Convert Palworld Player UID to Steam ID(s) <strong>EXPERIMENTAL</strong></h2>
+    <h2>Convert Palworld Player UID to Steam ID(s) <strong>(EXPERIMENTAL!)</strong></h2>
     <p>
       The process of converting a Steam ID to a Player UID is a one-way process. As such, we
       "convert" Palworld Player UIDs back to Steam IDs by bruteforcing every Steam ID. The process
       means that multiple different Steam IDs can map onto the same Palworld Player UID.
+    </p>
+    <p>
+      This only currently supports the regular Palworld Player UID, and not the No Steam UIDs that
+      are used when Steam is not available.
     </p>
     <form @submit.prevent="playerUidToSteamId" v-if="!bruteforcing">
       <label class="label">Palworld Player UID (Hex)</label>
