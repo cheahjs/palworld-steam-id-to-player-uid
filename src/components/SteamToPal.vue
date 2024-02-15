@@ -16,18 +16,26 @@ const steamIdToPlayerUid = (steamId: string) => {
   playerUidDecimal.value = unrealHashType.toString()
 }
 
-watch(steamId, async (newVal, oldVal) => {
+watch(steamId, async (newVal, _oldVal) => {
   steamIdToPlayerUid(newVal)
 })
 </script>
 
 <template>
   <div>
+    <h2>Convert Steam ID to Palworld Player UID</h2>
     <label class="label">Steam ID</label>
     <input v-model="steamId" type="text" placeholder="Enter your Steam ID" /><br />
     <pre v-if="steamId">
 Steam ID: {{ steamId }}
 Palworld Player UID (Hex - Save Files): {{ playerUid }}
-Palworld Player UID (Decimal - RCON): {{ playerUidDecimal }}</pre>
+Palworld Player UID (Decimal - RCON): {{ playerUidDecimal }}</pre
+    >
   </div>
 </template>
+
+<style scoped>
+input {
+  width: 100%;
+}
+</style>
