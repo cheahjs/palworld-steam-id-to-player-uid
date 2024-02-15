@@ -319,7 +319,7 @@ const resetState = () => {
           }}%) <progress max="100" :value="getProgressValue(progress)" />
         </li>
       </ul>
-      <p>Using GPU: {{ webgpuDeviceName }}</p>
+      <p v-if="bruteforceMethod == 'webgpu'">Using GPU: {{ webgpuDeviceName }}</p>
       <p v-if="bruteforceMethod == 'webgpu'">
         {{ webgpuProgress.current - webgpuProgress.start }}/{{
           webgpuProgress.end - webgpuProgress.start
