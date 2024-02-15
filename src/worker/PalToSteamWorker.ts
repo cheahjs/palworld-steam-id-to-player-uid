@@ -1,4 +1,3 @@
-import Long from 'long'
 import { city64 } from '../lib/bling.js'
 
 const steamIdToPlayerUid = (steamId: string) => {
@@ -7,7 +6,7 @@ const steamIdToPlayerUid = (steamId: string) => {
 }
 
 const steamAccountIdToBuf = (accountId: number) => {
-  return Long.fromBits(accountId, 17825793, true).toString()
+  return (BigInt(accountId) + 76561197960265728n).toString()
 }
 
 const reportEvery = 50000
