@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import type { Ref } from 'vue'
 import BruteforceWorker from '../worker/PalToSteamWorker?worker'
 import WebGPUResultWorker from '../worker/WebGPUResultWorker?worker'
 import computeShaderString from './compute_shader.wgsl?raw'
