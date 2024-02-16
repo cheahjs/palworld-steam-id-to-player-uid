@@ -121,13 +121,11 @@ const webgpuBruteForce = async (target: number) => {
       // console.log('Filling', fillAmount, 'buffers')
       for (let i = 0; i < fillAmount; i++) {
         inflightBufgen = inflightBufgen + 1
-        bufgenWorkers[currentWorkerIndex % hardwareConcurrency].postMessage(
-          {
-            id: currentWorkerIndex,
-            start: currentWorkerIndex * TOTAL_INVOCATIONS_PER_DISPATCH,
-            end: (currentWorkerIndex + 1) * TOTAL_INVOCATIONS_PER_DISPATCH
-          }
-        )
+        bufgenWorkers[currentWorkerIndex % hardwareConcurrency].postMessage({
+          id: currentWorkerIndex,
+          start: currentWorkerIndex * TOTAL_INVOCATIONS_PER_DISPATCH,
+          end: (currentWorkerIndex + 1) * TOTAL_INVOCATIONS_PER_DISPATCH
+        })
         // console.log('Dispatched buffer', currentWorkerIndex, 'worker:', currentWorkerIndex % hardwareConcurrency, 'inflight:', inflightBufgen)
         currentWorkerIndex++
       }
@@ -148,42 +146,18 @@ const webgpuBruteForce = async (target: number) => {
   // Create two of each buffer
   // create a buffer on the GPU to hold our computation input
   const workBuffers = [
-    createOnGpuBuffer(
-      device,
-      'input_data_0',
-      TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
-    ),
-    createOnGpuBuffer(
-      device,
-      'input_data_1',
-      TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
-    )
+    createOnGpuBuffer(device, 'input_data_0', TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE),
+    createOnGpuBuffer(device, 'input_data_1', TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE)
   ]
   // create a buffer on the GPU to hold our computation output
   const outputBuffers = [
-    createOnGpuBuffer(
-      device,
-      'output_result_0',
-      TOTAL_INVOCATIONS_PER_DISPATCH * 4
-    ),
-    createOnGpuBuffer(
-      device,
-      'output_result_1',
-      TOTAL_INVOCATIONS_PER_DISPATCH * 4
-    )
+    createOnGpuBuffer(device, 'output_result_0', TOTAL_INVOCATIONS_PER_DISPATCH * 4),
+    createOnGpuBuffer(device, 'output_result_1', TOTAL_INVOCATIONS_PER_DISPATCH * 4)
   ]
   // create a buffer on the GPU to get a copy of the results
   const stagingResultBuffers = [
-    createStagingBuffer(
-      device,
-      'staging: output_result_0',
-      outputBuffers[0].size
-    ),
-    createStagingBuffer(
-      device,
-      'staging: output_result_1',
-      outputBuffers[1].size
-    )
+    createStagingBuffer(device, 'staging: output_result_0', outputBuffers[0].size),
+    createStagingBuffer(device, 'staging: output_result_1', outputBuffers[1].size)
   ]
   // create a buffer on the GPU to hold our target hash
   const targetHashBuffer = createUniformBuffer(device, 'target_hash', 4)
@@ -210,7 +184,10 @@ const webgpuBruteForce = async (target: number) => {
       ]
     })
   ]
-  let previousPromise: Promise<void>[] = [new Promise((resolve) => resolve()), new Promise((resolve) => resolve())]
+  let previousPromise: Promise<void>[] = [
+    new Promise((resolve) => resolve()),
+    new Promise((resolve) => resolve())
+  ]
   for (let i = 0; i < TOTAL_DISPATCHES; i++) {
     // Wait for buffer to be filled
     await new Promise<void>((resolve) => {
@@ -245,7 +222,13 @@ const webgpuBruteForce = async (target: number) => {
       pass.end()
 
       // Copy the results to a staging buffer
-      encoder.copyBufferToBuffer(outputBuffers[i % 2], 0, stagingResultBuffers[i % 2], 0, stagingResultBuffers[i % 2].size)
+      encoder.copyBufferToBuffer(
+        outputBuffers[i % 2],
+        0,
+        stagingResultBuffers[i % 2],
+        0,
+        stagingResultBuffers[i % 2].size
+      )
 
       // Finish encoding and submit the commands
       const commandBuffer = encoder.finish()
@@ -261,8 +244,9 @@ const webgpuBruteForce = async (target: number) => {
         {
           start: i * TOTAL_INVOCATIONS_PER_DISPATCH,
           end: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
-          resultBuffer: result,
-        }, [result.buffer]
+          resultBuffer: result
+        },
+        [result.buffer]
       )
     })()
 
@@ -276,9 +260,9 @@ const webgpuBruteForce = async (target: number) => {
     }
   }
   done = true
-  bufgenWorkers.forEach(worker => {
+  bufgenWorkers.forEach((worker) => {
     worker.terminate()
-  });
+  })
   resultWorker.terminate()
 }
 
@@ -362,16 +346,28 @@ const resetState = () => {
     </p>
     <form @submit.prevent="playerUidToSteamId" v-if="!bruteforcing">
       <label class="label">Palworld Player UID (Hex)</label>
-      <input v-model="playerUidInput" type="text" placeholder="Enter your Palworld Player UID in hexadecimal" required
-        minlength="8" maxlength="8" pattern="[0-9a-fA-F]{8}" /><br />
+      <input
+        v-model="playerUidInput"
+        type="text"
+        placeholder="Enter your Palworld Player UID in hexadecimal"
+        required
+        minlength="8"
+        maxlength="8"
+        pattern="[0-9a-fA-F]{8}"
+      /><br />
       <label class="label">Bruteforce method</label>
       <select v-model="bruteforceMethod">
         <option v-if="webgpuAvailable" value="webgpu">WebGPU (GPU)</option>
-        <option value="webworkers">Web Workers (CPU)</option>
-      </select><br />
+        <option value="webworkers">Web Workers (CPU)</option></select
+      ><br />
       <label v-if="bruteforceMethod == 'webworkers'" class="label">Number of Web Workers</label>
-      <input v-if="bruteforceMethod == 'webworkers'" type="number" min="1" step="1"
-        v-model="webworkersThreadCount" /><br />
+      <input
+        v-if="bruteforceMethod == 'webworkers'"
+        type="number"
+        min="1"
+        step="1"
+        v-model="webworkersThreadCount"
+      /><br />
       <button type="submit">Convert</button>
     </form>
     <div v-else>
