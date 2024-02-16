@@ -1,16 +1,26 @@
 // input buffer is 34 bytes long, encoded as a 9x4 array of u32 values
-@group(0) @binding(0) var<storage, read> input_data: array<array<u32, 9>>;
+@group(0) @binding(0) var<storage, read_write> input_data: array<array<u32, 9>>;
 // each bit represents if the input hashes to the target
 @group(0) @binding(1) var<storage, read_write> output_result: array<u32>;
 @group(0) @binding(2) var<uniform> target_hash: u32;
-// @group(0) @binding(3) var<storage, read_write> debug_output: array<u32>;
- 
+@group(0) @binding(3) var<uniform> start_account_id: u32;
+
 @compute
 @workgroup_size(64)
 fn main(
     @builtin(global_invocation_id) id: vec3<u32>
 ) {
     let i = id.x;
+    steam_itoa(u64(start_account_id + i, 17825793u), i);
+    // output_result[0] = input_data[i][0];
+    // output_result[1] = input_data[i][1];
+    // output_result[2] = input_data[i][2];
+    // output_result[3] = input_data[i][3];
+    // output_result[4] = input_data[i][4];
+    // output_result[5] = input_data[i][5];
+    // output_result[6] = input_data[i][6];
+    // output_result[7] = input_data[i][7];
+    // output_result[8] = input_data[i][8];
     // Hash the buffer
     const len = 34;
     // static const uint64 k2 = 0x9ae16a3b2f90404fULL;
@@ -202,4 +212,148 @@ fn or_u64_u64(a: u64, b: u64) -> u64 {
 
 fn xor_u64_u64(a: u64, b: u64) -> u64 {
     return vec2(a.x ^ b.x, a.y ^ b.y);
+}
+
+// Packed quotient, remainder
+// See https://stackoverflow.com/questions/18448343/divdi3-division-used-for-long-long-by-gcc-on-x86
+// and https://stackoverflow.com/questions/11548070/x86-64-big-integer-representation/18202791#18202791
+// TODO: eeek, will this work, we're using our signed subtraction on unsigned where we guarantee the top bit
+// TODO: could optimize the left shift
+// TODO: omg, are we going to overflow?
+// TODO: we can ignore division with https://en.wikipedia.org/wiki/Binary_GCD_algorithm perhaps?
+fn div_u64_u64(a: u64, b: u64) -> vec4<u32> {
+    var result = vec2(0u, 0u);
+    var remainder = a;
+
+    let high_bit = min(first_leading_bit_u64(a), first_leading_bit_u64(b));
+    var count = 63u - high_bit;
+    var divisor = left_shift_u64(b, count);
+
+    while !is_zero_u64(remainder) {
+        if cmp_u64_u64(remainder, divisor) >= 0i {
+            remainder = subtract_i64_i64(remainder, divisor);
+            result = result | left_shift_u64(vec2(1u, 0u), count);
+        }
+        if count == 0u {
+      break;
+        }
+        divisor = right_shift_u64(divisor, 1u);
+        count -= 1u;
+    }
+
+    return vec4(result, remainder);
+}
+
+fn div_steam_u64_10(a: u64) -> vec3<u32> {
+    var result = vec2(0u, 0u);
+    var remainder = a;
+    const b = vec2(10u, 0u);
+
+    let high_bit = min(first_leading_bit_u64(a), first_leading_bit_u64(b));
+// >>> bin(76561197960265728)
+// '0b100010000000000000000000100000000000000000000000000000000'
+// >>> bin(10)
+// '0b1010'
+//   let high_bit = min(56, 3)
+//   let high_bit = 3;
+    var count = 63u - high_bit;
+//    var count = 60u;
+    var divisor = left_shift_u64(b, count);
+// 10 << 60 = 11529215046068469760
+//    var divisor = vec2(0u, 2684354560)
+
+    while !is_zero_u64(remainder) {
+        if cmp_u64_u64(remainder, divisor) >= 0i {
+            remainder = subtract_i64_i64(remainder, divisor);
+            result = result | left_shift_u64(vec2(1u, 0u), count);
+        }
+        if count == 0u {
+            break;
+        }
+        divisor = right_shift_u64(divisor, 1u);
+        count -= 1u;
+    }
+
+    return vec3(result, remainder.x);
+}
+
+fn is_zero_u64(a: u64) -> bool {
+    return a.x == 0u && a.y == 0u;
+}
+
+fn cmp_u64_u64(a: u64, b: u64) -> i32 {
+    if a.y < b.y {
+        return -1i;
+    } else if a.y > b.y {
+        return 1i;
+    } else {
+        if a.x < b.x {
+            return -1i;
+        } else if a.x > b.x {
+            return 1i;
+        } else {
+            return 0i;
+        }
+    }
+}
+
+fn subtract_i64_i64(a: i64, b: i64) -> i64 {
+    return add_i64_i64(a, negate_i64(b));
+}
+
+fn negate_i64(a: i64) -> i64 {
+    return add_u64_u64(~a, vec2(1u, 0u));
+}
+
+fn add_i64_i64(a: i64, b: i64) -> i64 {
+    return add_u64_u64(a, b);
+}
+
+fn first_leading_bit_u64(a: u64) -> u32 {
+    if a.y != 0u {
+        return firstLeadingBit(a.y) + 32u;
+    } else {
+        return firstLeadingBit(a.x);
+    }
+}
+
+alias i64 = vec2<u32>;
+
+// https://github.com/compute-toys/include/blob/146065171bd09afff4bec5823f0b1d2397d28b51/std/string.wgsl
+// MIT License
+
+// Copyright (c) 2022 compute-toys
+
+// Permission is hereby granted, free of charge, to any person obtaining a copy
+// of this software and associated documentation files (the "Software"), to deal
+// in the Software without restriction, including without limitation the rights
+// to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+// copies of the Software, and to permit persons to whom the Software is
+// furnished to do so, subject to the following conditions:
+
+// The above copyright notice and this permission notice shall be included in all
+// copies or substantial portions of the Software.
+
+// THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+// IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+// FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+// AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+// LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+// OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+// SOFTWARE.
+
+fn steam_itoa(num: u64, data_idx: u32) {
+    var n = num;
+    for (var i = 1u; i < 17u; i += 1u) {
+        let div = div_steam_u64_10(n);
+        let remainder = div.z;
+        let shift = select(0u, 16u, i % 2u == 0);
+        input_data[data_idx][8 - (i / 2u)] = input_data[data_idx][8 - (i / 2u)] | ((0x30 + remainder) << shift);
+        n = vec2(div.x, div.y);
+        // if is_zero_u64(n) {
+        //     break;
+        // }
+    }
+    // For some reason it yields a final digit of 1, so just hack it
+    input_data[data_idx][0] = input_data[data_idx][0] | 0x37;
 }

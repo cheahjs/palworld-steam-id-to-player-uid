@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import BruteforceWorker from '../worker/PalToSteamWorker?worker'
-import BufgenWorker from '../worker/BufgenWorker?worker'
 import WebGPUResultWorker from '../worker/WebGPUResultWorker?worker'
 import computeShaderString from './compute_shader.wgsl?raw'
 
@@ -92,49 +91,11 @@ const webgpuBruteForce = async (target: number) => {
   })
 
   const WORKGROUP_SIZE = 64
-  const DISPATCH_GROUP_SIZE = 1024
+  const DISPATCH_GROUP_SIZE = 2048
   const TOTAL_INVOCATIONS_PER_DISPATCH = WORKGROUP_SIZE * DISPATCH_GROUP_SIZE
   const TOTAL_DISPATCHES = Math.ceil(2 ** 32 / TOTAL_INVOCATIONS_PER_DISPATCH)
   const PER_INPUT_SIZE = 9 * 4 // 9 32-bit integers
 
-  const hardwareConcurrency = Math.max(navigator.hardwareConcurrency || 1, 16)
-  // store local buffers to hold our computation input
-  const localInputBuffers: { [id: number]: Uint8Array } = {}
-  // create workers to fill buffers
-  const bufgenWorkers: Worker[] = []
-  let inflightBufgen = 0
-  let currentWorkerIndex = 0
-  let done = false
-  for (let i = 0; i < hardwareConcurrency; i++) {
-    const worker = new BufgenWorker()
-    worker.onmessage = (e) => {
-      // console.log('Received buffer', e.data.id)
-      localInputBuffers[e.data.id] = e.data.buffer
-      inflightBufgen = Math.max(0, inflightBufgen - 1)
-    }
-    bufgenWorkers.push(worker)
-  }
-  const fillBuffers = () => {
-    const currentBufferCount = Object.keys(localInputBuffers).length + inflightBufgen
-    if (currentBufferCount < hardwareConcurrency && currentWorkerIndex < TOTAL_DISPATCHES) {
-      const fillAmount = hardwareConcurrency - currentBufferCount
-      // console.log('Filling', fillAmount, 'buffers')
-      for (let i = 0; i < fillAmount; i++) {
-        inflightBufgen = inflightBufgen + 1
-        bufgenWorkers[currentWorkerIndex % hardwareConcurrency].postMessage({
-          id: currentWorkerIndex,
-          start: currentWorkerIndex * TOTAL_INVOCATIONS_PER_DISPATCH,
-          end: (currentWorkerIndex + 1) * TOTAL_INVOCATIONS_PER_DISPATCH
-        })
-        // console.log('Dispatched buffer', currentWorkerIndex, 'worker:', currentWorkerIndex % hardwareConcurrency, 'inflight:', inflightBufgen)
-        currentWorkerIndex++
-      }
-    }
-    if (!done) {
-      setTimeout(fillBuffers, 1)
-    }
-  }
-  fillBuffers()
   // create worker to process results
   let resultWorker = new WebGPUResultWorker()
   resultWorker.onmessage = (e) => {
@@ -159,6 +120,11 @@ const webgpuBruteForce = async (target: number) => {
     createStagingBuffer(device, 'staging: output_result_0', outputBuffers[0].size),
     createStagingBuffer(device, 'staging: output_result_1', outputBuffers[1].size)
   ]
+  // create two buffers on the GPU to hold our current start
+  const startNumBuffers = [
+    createUniformBuffer(device, 'start_num_0', 4),
+    createUniformBuffer(device, 'start_num_1', 4)
+  ]
   // create a buffer on the GPU to hold our target hash
   const targetHashBuffer = createUniformBuffer(device, 'target_hash', 4)
   device.queue.writeBuffer(targetHashBuffer, 0, new Uint32Array([target]))
@@ -171,7 +137,8 @@ const webgpuBruteForce = async (target: number) => {
       entries: [
         { binding: 0, resource: { buffer: workBuffers[0] } },
         { binding: 1, resource: { buffer: outputBuffers[0] } },
-        { binding: 2, resource: { buffer: targetHashBuffer } }
+        { binding: 2, resource: { buffer: targetHashBuffer } },
+        { binding: 3, resource: { buffer: startNumBuffers[0] } }
       ]
     }),
     device.createBindGroup({
@@ -180,7 +147,8 @@ const webgpuBruteForce = async (target: number) => {
       entries: [
         { binding: 0, resource: { buffer: workBuffers[1] } },
         { binding: 1, resource: { buffer: outputBuffers[1] } },
-        { binding: 2, resource: { buffer: targetHashBuffer } }
+        { binding: 2, resource: { buffer: targetHashBuffer } },
+        { binding: 3, resource: { buffer: startNumBuffers[1] } }
       ]
     })
   ]
@@ -189,29 +157,14 @@ const webgpuBruteForce = async (target: number) => {
     new Promise((resolve) => resolve())
   ]
   for (let i = 0; i < TOTAL_DISPATCHES; i++) {
-    // Wait for buffer to be filled
-    await new Promise<void>((resolve) => {
-      function checkAvailable() {
-        if (i in localInputBuffers) {
-          resolve()
-        } else {
-          setTimeout(checkAvailable, 1)
-        }
-      }
-      checkAvailable()
-    })
-    const inputBuffer = localInputBuffers[i]
-    delete localInputBuffers[i]
     // Wait for the previous computation to finish before starting the next one
     await previousPromise[i % 2]
+
     {
-      // Copy the local buffer to the GPU buffer
       device.queue.writeBuffer(
-        workBuffers[i % 2],
+        startNumBuffers[i % 2],
         0,
-        inputBuffer.buffer,
-        inputBuffer.byteOffset,
-        inputBuffer.byteLength
+        new Uint32Array([i * TOTAL_INVOCATIONS_PER_DISPATCH])
       )
       // Encode commands to do the computation
       const encoder = device.createCommandEncoder()
@@ -236,21 +189,22 @@ const webgpuBruteForce = async (target: number) => {
     }
 
     // Read the results
-    previousPromise[i % 2] = (async () => {
-      await stagingResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
-      const result = new Uint32Array(stagingResultBuffers[i % 2].getMappedRange().slice(0))
-      stagingResultBuffers[i % 2].unmap()
-      resultWorker.postMessage(
-        {
-          start: i * TOTAL_INVOCATIONS_PER_DISPATCH,
-          end: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
-          resultBuffer: result
-        },
-        [result.buffer]
-      )
-    })()
+    // previousPromise[i % 2] = (async () => {
+    //   await stagingResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
+    //   const result = new Uint32Array(stagingResultBuffers[i % 2].getMappedRange().slice(0))
+    //   stagingResultBuffers[i % 2].unmap()
+    //   resultWorker.postMessage(
+    //     {
+    //       start: i * TOTAL_INVOCATIONS_PER_DISPATCH,
+    //       end: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
+    //       resultBuffer: result
+    //     },
+    //     [result.buffer]
+    //   )
+    // })()
+    previousPromise[i % 2] = device.queue.onSubmittedWorkDone()
 
-    if (i % 16 == 0) {
+    if (i % 32 == 0) {
       const progress = {
         current: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
         start: 0,
@@ -259,11 +213,7 @@ const webgpuBruteForce = async (target: number) => {
       webgpuProgress.value = progress
     }
   }
-  done = true
-  bufgenWorkers.forEach((worker) => {
-    worker.terminate()
-  })
-  resultWorker.terminate()
+  await Promise.all(previousPromise)
 }
 
 // Create a buffer for var<storage, read_write> on the GPU
