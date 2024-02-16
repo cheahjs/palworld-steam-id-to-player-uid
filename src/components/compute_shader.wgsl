@@ -14,30 +14,38 @@ fn main(
     // Hash the buffer
     const len = 34;
     // static const uint64 k2 = 0x9ae16a3b2f90404fULL;
-    let k2 = u32x2_to_u64(797982799, 2598464059);
+    const k2 = u64(797982799u, 2598464059u);
 
     // uint64 mul = k2 + len * 2;
-    let mul = add_u64_u64(k2, u32_to_u64(len * 2));
+    // mul = 0x9ae16a3b2f90404f + (34 * 2) = 0x9ae16a3b2f90404f + 68 = 0x9ae16a3b2f9040bb
+    // let mul = add_u64_u64(k2, u32_to_u64(len * 2));
+    const mul = u64(797982867u, 2598464059u);
     // uint64 a = Fetch64(s) * k2;
-    var a = mul_u64_u64(Fetch64(i, 0), k2);
+    // let a = mul_u64_u64(Fetch64(i, 0), k2);
+    // Fetch64(0) = 15199876379181111
+    // a = 169635456293653574892571274399699193
+    const a = vec2(3366441209u, 410069887u);
     // uint64 b = Fetch64(s + 8);
-    var b = Fetch64(i, 8);
+    let b = Fetch64(i, 8);
     // uint64 c = Fetch64(s + len - 24);
+    // let c = Fetch64(i, 10);
     let c = Fetch64(i, len - 24);
     // uint64 d = Fetch64(s + len - 32);
-    let d = Fetch64(i, len - 32);
+    // let d = Fetch64(i, 2) = 13792505790529590;
+    // let d = Fetch64(i, len - 32);
+    const d = u64(3473462u, 3211318u);
     // uint64 e = Fetch64(s + 16) * k2;
     let e = mul_u64_u64(Fetch64(i, 16), k2);
     // uint64 f = Fetch64(s + 24) * 9;
-    let f = mul_u64_u64(Fetch64(i, 24), u32_to_u64(9));
+    let f = mul_u64_u64(Fetch64(i, 24), vec2(9, 0));
     // uint64 g = Fetch64(s + len - 8);
     let g = Fetch64(i, len - 8);
     // uint64 h = Fetch64(s + len - 16) * mul;
     let h = mul_u64_u64(Fetch64(i, len - 16), mul);
     // uint64 u = Rotate(a + g, 43) + (Rotate(b, 30) + c) * 9;
-    let u = add_u64_u64(Rotate(add_u64_u64(a, g), 43), mul_u64_u64(add_u64_u64(Rotate(b, 30), c), u32_to_u64(9)));
+    let u = add_u64_u64(Rotate(add_u64_u64(a, g), 43), mul_u64_u64(add_u64_u64(Rotate(b, 30), c), vec2(9u, 0u)));
     // uint64 v = ((a + g) ^ d) + f + 1;
-    let v = add_u64_u64(add_u64_u64(xor_u64_u64(add_u64_u64(a, g), d), f), u32_to_u64(1));
+    let v = add_u64_u64(add_u64_u64(xor_u64_u64(add_u64_u64(a, g), d), f), vec2(1u, 0u));
     // uint64 w = bswap_64((u + v) * mul) + h;
     let w = add_u64_u64(bswap_64(mul_u64_u64(add_u64_u64(u, v), mul)), h);
     // uint64 x = Rotate(e + f, 42) + c;
@@ -47,11 +55,11 @@ fn main(
     // uint64 z = e + f + c;
     let z = add_u64_u64(add_u64_u64(e, f), c);
     // a = bswap_64((x + z) * mul + y) + b;
-    a = add_u64_u64(bswap_64(add_u64_u64(mul_u64_u64(add_u64_u64(x, z), mul), y)), b);
+    let a2 = add_u64_u64(bswap_64(add_u64_u64(mul_u64_u64(add_u64_u64(x, z), mul), y)), b);
     // b = ShiftMix((z + a) * mul + d + h) * mul;
-    b = mul_u64_u64(ShiftMix(add_u64_u64(mul_u64_u64(add_u64_u64(z, a), mul), add_u64_u64(d, h))), mul);
+    let b2 = mul_u64_u64(ShiftMix(add_u64_u64(mul_u64_u64(add_u64_u64(z, a2), mul), add_u64_u64(d, h))), mul);
     // return b + x;
-    let result: u64 = add_u64_u64(b, x);
+    let result: u64 = add_u64_u64(b2, x);
     // Perform Unreal's compression
     let hash: u32 = result.x + (result.y * 23);
 
