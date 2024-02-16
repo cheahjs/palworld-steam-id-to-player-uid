@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, type Ref } from 'vue'
 import BruteforceWorker from '../worker/PalToSteamWorker?worker'
+import WebGPUHelperWorker from '../worker/WebGPUWorker?worker'
 import computeShaderString from './compute_shader.wgsl?raw'
 
 const playerUidInput = ref('')
@@ -10,7 +11,7 @@ const webgpuAvailable = !!navigator.gpu
 const threadsAvailable = navigator.hardwareConcurrency
 const webworkersThreadCount = ref(threadsAvailable)
 const webworkersProgress = ref([{ current: 0, start: 0, end: 0 }])
-const foundSteamIds = ref([0])
+const foundSteamIds: Ref<string[]> = ref([])
 const webgpuProgress = ref({ current: 0, start: 0, end: 0 })
 const webgpuDeviceName = ref('')
 
@@ -50,7 +51,7 @@ const webworkerBruteForce = async (target: number) => {
             webworkersProgress.value[i] = e.data.progress
           } else if (e.data.accountId) {
             console.log('Steam ID found', e.data.accountId)
-            foundSteamIds.value.push(e.data.accountId)
+            foundSteamIds.value.push(steamAccountIdToString(e.data.accountId))
           } else if (e.data.type == 'done') {
             console.log(`Worker ${i} done`)
             worker.terminate()
@@ -95,16 +96,16 @@ const webgpuBruteForce = async (target: number) => {
   const TOTAL_DISPATCHES = Math.ceil(2 ** 32 / TOTAL_INVOCATIONS_PER_DISPATCH)
   const PER_INPUT_SIZE = 9 * 4 // 9 32-bit integers
 
+  // Setup web worker to help with buffer generation
+  const webgpuHelperWorker = new WebGPUHelperWorker()
+  webgpuHelperWorker.postMessage({ type: 'init' })
+
   // create a buffer on the GPU to hold our computation input
   const workBuffer = createOnGpuBuffer(
     device,
     'input_data',
     TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
   )
-  // create a local buffer to hold our computation input
-  const localWorkBuffer = new Uint8Array(TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE)
-  // create a buffer on the GPU to copy input data
-  const mappedWorkBuffer = createOnGpuMapped(device, 'staging: input_data', workBuffer.size)
   // create a buffer on the GPU to hold our computation output
   const outputBuffer = createOnGpuBuffer(
     device,
@@ -133,18 +134,20 @@ const webgpuBruteForce = async (target: number) => {
   })
 
   for (let i = 0; i < TOTAL_DISPATCHES; i++) {
-    if (i == 0) {
-      // Generate the first buffer
-      await generateInputBuffer(
-        localWorkBuffer,
-        i * TOTAL_INVOCATIONS_PER_DISPATCH,
-        (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH
-      )
-    }
+    // Pop a buffer from the web worker
+    const buffer = await new Promise<Uint8Array>((resolve, _reject) => {
+      webgpuHelperWorker.onmessage = (e) => {
+        if (e.data.type == 'pop') {
+          resolve(e.data.buffer)
+        }
+      }
+      webgpuHelperWorker.postMessage({ type: 'pop' })
+      return void 0
+    })
+    // Copy the buffer to the GPU
+    device.queue.writeBuffer(workBuffer, 0, buffer)
     // Encode commands to do the computation
     const encoder = device.createCommandEncoder()
-    // // Copy the mapped buffer to the work buffer
-    encoder.copyBufferToBuffer(mappedWorkBuffer, 0, workBuffer, 0, workBuffer.size);
     const pass = encoder.beginComputePass()
     pass.setPipeline(pipeline)
     pass.setBindGroup(0, bindGroup)
@@ -162,38 +165,27 @@ const webgpuBruteForce = async (target: number) => {
     let workDonePromise = device.queue.onSubmittedWorkDone()
 
     // Read the results
-    let resultsDonePromise = workDonePromise.then(async () => {
+    await workDonePromise.then(async () => {
       await stagingResultBuffer.mapAsync(GPUMapMode.READ)
       const result = new Uint32Array(stagingResultBuffer.getMappedRange().slice(0))
       stagingResultBuffer.unmap()
       for (let j = 0; j < result.length; j++) {
         if (result[j] != 0) {
+          let steamIdString = buffer.slice(j * 36, (j) * 36 + 35).reduce((acc, val) => {
+            if (val != 0) {
+              return acc + String.fromCharCode(val)
+            }
+            return acc
+          }, '')
           console.log(
             'Steam ID found at',
-            steamAccountIdToString(i * TOTAL_INVOCATIONS_PER_DISPATCH + j),
+            steamIdString,
             result[j]
           )
-          foundSteamIds.value.push(i * TOTAL_INVOCATIONS_PER_DISPATCH + j)
+          foundSteamIds.value.push(steamIdString)
         }
       }
     })
-
-    // Start prepping the next buffer
-    let nextBufferPromise = generateInputBuffer(
-      localWorkBuffer,
-      (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
-      (i + 2) * TOTAL_INVOCATIONS_PER_DISPATCH
-    ).then(() => {
-      device.queue.writeBuffer(
-        mappedWorkBuffer,
-        0,
-        localWorkBuffer.buffer,
-        localWorkBuffer.byteOffset,
-        localWorkBuffer.byteLength
-      )
-    })
-
-    await Promise.all([resultsDonePromise, nextBufferPromise])
 
     if (i % 16 == 0) {
       const progress = {
@@ -204,6 +196,8 @@ const webgpuBruteForce = async (target: number) => {
       webgpuProgress.value = progress
     }
   }
+
+  webgpuHelperWorker.terminate()
 }
 
 const generateInputBuffer = async (buffer: Uint8Array, start: number, end: number) => {
@@ -269,8 +263,8 @@ const getProgressValue = (progress: { current: number; start: number; end: numbe
     : ((progress.current - progress.start) / (progress.end - progress.start)) * 100
 }
 
-const getSteamProfileUrl = (accountId: number) => {
-  return `https://steamcommunity.com/profiles/${steamAccountIdToString(accountId)}`
+const getSteamProfileUrl = (steamId: string) => {
+  return `https://steamcommunity.com/profiles/${steamId}`
 }
 
 const resetState = () => {
@@ -317,7 +311,7 @@ const resetState = () => {
       <h3>Found Steam IDs</h3>
       <ul>
         <li v-for="steamId in foundSteamIds" :key="steamId">
-          <a :href="getSteamProfileUrl(steamId)">{{ steamAccountIdToString(steamId) }}</a>
+          <a :href="getSteamProfileUrl(steamId)">{{ steamId }}</a>
         </li>
       </ul>
       <h3>Status</h3>
