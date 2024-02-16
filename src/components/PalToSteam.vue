@@ -105,11 +105,6 @@ const webgpuBruteForce = async (target: number) => {
     }
   }
   // Create two of each buffer
-  // create a buffer on the GPU to hold our computation input
-  const workBuffers = [
-    createOnGpuBuffer(device, 'input_data_0', TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE),
-    createOnGpuBuffer(device, 'input_data_1', TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE)
-  ]
   // create a buffer on the GPU to hold our computation output
   const outputBuffers = [
     createOnGpuBuffer(device, 'output_result_0', TOTAL_INVOCATIONS_PER_DISPATCH * 4),
@@ -135,20 +130,18 @@ const webgpuBruteForce = async (target: number) => {
       label: 'bindGroup for work buffer 0',
       layout: pipeline.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: { buffer: workBuffers[0] } },
-        { binding: 1, resource: { buffer: outputBuffers[0] } },
-        { binding: 2, resource: { buffer: targetHashBuffer } },
-        { binding: 3, resource: { buffer: startNumBuffers[0] } }
+        { binding: 0, resource: { buffer: outputBuffers[0] } },
+        { binding: 1, resource: { buffer: targetHashBuffer } },
+        { binding: 2, resource: { buffer: startNumBuffers[0] } }
       ]
     }),
     device.createBindGroup({
       label: 'bindGroup for work buffer 1',
       layout: pipeline.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: { buffer: workBuffers[1] } },
-        { binding: 1, resource: { buffer: outputBuffers[1] } },
-        { binding: 2, resource: { buffer: targetHashBuffer } },
-        { binding: 3, resource: { buffer: startNumBuffers[1] } }
+        { binding: 0, resource: { buffer: outputBuffers[1] } },
+        { binding: 1, resource: { buffer: targetHashBuffer } },
+        { binding: 2, resource: { buffer: startNumBuffers[1] } }
       ]
     })
   ]

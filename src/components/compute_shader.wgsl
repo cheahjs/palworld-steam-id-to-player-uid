@@ -1,9 +1,7 @@
-// input buffer is 34 bytes long, encoded as a 9x4 array of u32 values
-@group(0) @binding(0) var<storage, read_write> input_data: array<array<u32, 9>>;
 // each bit represents if the input hashes to the target
-@group(0) @binding(1) var<storage, read_write> output_result: array<u32>;
-@group(0) @binding(2) var<uniform> target_hash: u32;
-@group(0) @binding(3) var<uniform> start_account_id: u32;
+@group(0) @binding(0) var<storage, read_write> output_result: array<u32>;
+@group(0) @binding(1) var<uniform> target_hash: u32;
+@group(0) @binding(2) var<uniform> start_account_id: u32;
 
 @compute
 @workgroup_size(64)
@@ -11,7 +9,9 @@ fn main(
     @builtin(global_invocation_id) id: vec3<u32>
 ) {
     let i = id.x;
-    steam_itoa(u64(start_account_id + i, 17825793u), i);
+    var in_d = array<u32, 9>();
+    let in_ptr = &in_d;
+    steam_itoa(in_ptr, u64(start_account_id + i, 17825793u));
     // Hash the buffer
     const len = 34;
     // static const uint64 k2 = 0x9ae16a3b2f90404fULL;
@@ -27,22 +27,22 @@ fn main(
     // a = 169635456293653574892571274399699193
     const a = vec2(3366441209u, 410069887u);
     // uint64 b = Fetch64(s + 8);
-    let b = Fetch64(i, 8);
+    let b = Fetch64(in_ptr, 8);
     // uint64 c = Fetch64(s + len - 24);
     // let c = Fetch64(i, 10);
-    let c = Fetch64(i, len - 24);
+    let c = Fetch64(in_ptr, len - 24);
     // uint64 d = Fetch64(s + len - 32);
     // let d = Fetch64(i, 2) = 13792505790529590;
     // let d = Fetch64(i, len - 32);
     const d = u64(3473462u, 3211318u);
     // uint64 e = Fetch64(s + 16) * k2;
-    let e = mul_u64_u64(Fetch64(i, 16), k2);
+    let e = mul_u64_u64(Fetch64(in_ptr, 16), k2);
     // uint64 f = Fetch64(s + 24) * 9;
-    let f = mul_u64_u64(Fetch64(i, 24), vec2(9, 0));
+    let f = mul_u64_u64(Fetch64(in_ptr, 24), vec2(9, 0));
     // uint64 g = Fetch64(s + len - 8);
-    let g = Fetch64(i, len - 8);
+    let g = Fetch64(in_ptr, len - 8);
     // uint64 h = Fetch64(s + len - 16) * mul;
-    let h = mul_u64_u64(Fetch64(i, len - 16), mul);
+    let h = mul_u64_u64(Fetch64(in_ptr, len - 16), mul);
     // uint64 u = Rotate(a + g, 43) + (Rotate(b, 30) + c) * 9;
     let u = add_u64_u64(Rotate(add_u64_u64(a, g), 43), mul_u64_u64(add_u64_u64(Rotate(b, 30), c), vec2(9u, 0u)));
     // uint64 v = ((a + g) ^ d) + f + 1;
@@ -92,15 +92,15 @@ fn Rotate(val: u64, shift: u32) -> u64 {
     );
 }
 
-fn Fetch64(idx: u32, offset: u32) -> u64 {
-    let low = read_u8(idx, offset) + (read_u8(idx, offset + 1u) << 8u) + (read_u8(idx, offset + 2u) << 16u) + (read_u8(idx, offset + 3u) << 24u);
-    let high = read_u8(idx, offset + 4u) + (read_u8(idx, offset + 5u) << 8u) + (read_u8(idx, offset + 6u) << 16u) + (read_u8(idx, offset + 7u) << 24u);
+fn Fetch64(data: ptr<function,array<u32, 9>>, offset: u32) -> u64 {
+    let low = read_u8(data, offset) + (read_u8(data, offset + 1u) << 8u) + (read_u8(data, offset + 2u) << 16u) + (read_u8(data, offset + 3u) << 24u);
+    let high = read_u8(data, offset + 4u) + (read_u8(data, offset + 5u) << 8u) + (read_u8(data, offset + 6u) << 16u) + (read_u8(data, offset + 7u) << 24u);
     return u32x2_to_u64(low, high);
 }
 
-fn read_u8(idx: u32, offset: u32) -> u32 {
-    let ipos: u32 = offset / 4u;
-    let val_u32: u32 = input_data[idx][ipos];
+fn read_u8(data: ptr<function,array<u32, 9>>, offset: u32) -> u32 {
+    let ipos: u32 = offset >> 2u;
+    let val_u32: u32 = (*data)[ipos];
     let shift: u32 = 8u * (offset % 4u);
     let val_u8: u32 = (val_u32 >> shift) & 0xFFu;
 
@@ -293,15 +293,15 @@ alias i64 = vec2<u32>;
 // OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 // SOFTWARE.
 
-fn steam_itoa(num: u64, data_idx: u32) {
+fn steam_itoa(data: ptr<function,array<u32, 9>>, num: u64) {
     var n = num;
     for (var i = 1u; i < 17u; i += 1u) {
         let div = div_steam_u64_10(n);
         let remainder = div.z;
         let shift = select(0u, 16u, (i & 1) == 0);
-        input_data[data_idx][8 - (i >> 1)] |= ((0x30 + remainder) << shift);
+        (*data)[8 - (i >> 1)] |= ((0x30 + remainder) << shift);
         n = vec2(div.x, div.y);
     }
     // For some reason it yields a final digit of 1, so just hack it
-    input_data[data_idx][0] = input_data[data_idx][0] | 0x37;
+    (*data)[0] = (*data)[0] | 0x37;
 }
