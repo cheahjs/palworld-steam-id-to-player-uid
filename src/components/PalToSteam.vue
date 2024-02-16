@@ -120,6 +120,15 @@ const webgpuBruteForce = async (target: number) => {
     createUniformBuffer(device, 'start_num_0', 4),
     createUniformBuffer(device, 'start_num_1', 4)
   ]
+  // create a buffer on the GPU to signal if we found a result
+  const signalBuffers = [
+    createOnGpuBuffer(device, 'signal_result_0', 4),
+    createOnGpuBuffer(device, 'signal_result_1', 4)
+  ]
+  const stagingSignalResultBuffers = [
+    createStagingBuffer(device, 'staging: signal_result_0', 4),
+    createStagingBuffer(device, 'staging: signal_result_1', 4)
+  ]
   // create a buffer on the GPU to hold our target hash
   const targetHashBuffer = createUniformBuffer(device, 'target_hash', 4)
   device.queue.writeBuffer(targetHashBuffer, 0, new Uint32Array([target]))
@@ -132,7 +141,8 @@ const webgpuBruteForce = async (target: number) => {
       entries: [
         { binding: 0, resource: { buffer: outputBuffers[0] } },
         { binding: 1, resource: { buffer: targetHashBuffer } },
-        { binding: 2, resource: { buffer: startNumBuffers[0] } }
+        { binding: 2, resource: { buffer: startNumBuffers[0] } },
+        { binding: 3, resource: { buffer: signalBuffers[0] } }
       ]
     }),
     device.createBindGroup({
@@ -141,7 +151,8 @@ const webgpuBruteForce = async (target: number) => {
       entries: [
         { binding: 0, resource: { buffer: outputBuffers[1] } },
         { binding: 1, resource: { buffer: targetHashBuffer } },
-        { binding: 2, resource: { buffer: startNumBuffers[1] } }
+        { binding: 2, resource: { buffer: startNumBuffers[1] } },
+        { binding: 3, resource: { buffer: signalBuffers[1] } }
       ]
     })
   ]
@@ -175,6 +186,13 @@ const webgpuBruteForce = async (target: number) => {
         0,
         stagingResultBuffers[i % 2].size
       )
+      encoder.copyBufferToBuffer(
+        signalBuffers[i % 2],
+        0,
+        stagingSignalResultBuffers[i % 2],
+        0,
+        stagingSignalResultBuffers[i % 2].size
+      )
 
       // Finish encoding and submit the commands
       const commandBuffer = encoder.finish()
@@ -183,17 +201,24 @@ const webgpuBruteForce = async (target: number) => {
 
     // Read the results
     previousPromise[i % 2] = (async () => {
-      await stagingResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
-      const result = new Uint32Array(stagingResultBuffers[i % 2].getMappedRange().slice(0))
-      stagingResultBuffers[i % 2].unmap()
-      resultWorker.postMessage(
-        {
-          start: i * TOTAL_INVOCATIONS_PER_DISPATCH,
-          end: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
-          resultBuffer: result
-        },
-        [result.buffer]
+      await stagingSignalResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
+      const signalResult = new Uint32Array(
+        stagingSignalResultBuffers[i % 2].getMappedRange().slice(0)
       )
+      stagingSignalResultBuffers[i % 2].unmap()
+      if (signalResult[0] > 0) {
+        await stagingResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
+        const result = new Uint32Array(stagingResultBuffers[i % 2].getMappedRange().slice(0))
+        stagingResultBuffers[i % 2].unmap()
+        resultWorker.postMessage(
+          {
+            start: i * TOTAL_INVOCATIONS_PER_DISPATCH,
+            end: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
+            resultBuffer: result
+          },
+          [result.buffer]
+        )
+      }
     })()
 
     if (i % 8 == 0) {

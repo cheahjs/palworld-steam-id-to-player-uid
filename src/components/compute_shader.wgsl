@@ -1,7 +1,7 @@
-// each bit represents if the input hashes to the target
 @group(0) @binding(0) var<storage, read_write> output_result: array<u32>;
 @group(0) @binding(1) var<uniform> target_hash: u32;
 @group(0) @binding(2) var<uniform> start_account_id: u32;
+@group(0) @binding(3) var<storage, read_write> signal_output: u32;
 
 @compute
 @workgroup_size(64)
@@ -71,6 +71,9 @@ fn main(
     // let bit_set: u32 = init_bit << shift;
     // atomicOr(&output_result[ipos], bit_set);
     output_result[i] = init_bit;
+    if (init_bit == 1u) {
+        signal_output = 1u;
+    }
 }
 
 fn ShiftMix(val: u64) -> u64 {
