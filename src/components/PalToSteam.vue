@@ -14,6 +14,8 @@ const webworkersProgress = ref([{ current: 0, start: 0, end: 0 }])
 const foundSteamIds = ref([0])
 const webgpuProgress = ref({ current: 0, start: 0, end: 0 })
 const webgpuDeviceName = ref('')
+const bruteforceStartTime = ref(0)
+const bruteforceStopTime: Ref<number | null> = ref(null)
 
 const steamAccountIdToString = (accountId: number) => {
   return (BigInt(accountId) + 76561197960265728n).toString()
@@ -23,6 +25,7 @@ const playerUidToSteamId = async () => {
   resetState()
   console.log('Brute forcing player UID to Steam ID', playerUidInput)
   bruteforcing.value = true
+  bruteforceStartTime.value = Date.now()
 
   if (bruteforceMethod.value == 'webgpu') {
     await webgpuBruteForce(parseInt(playerUidInput.value, 16))
@@ -63,6 +66,7 @@ const webworkerBruteForce = async (target: number) => {
     )
   }
   await Promise.all(tasks)
+  bruteforceStopTime.value = Date.now()
 }
 
 const webgpuBruteForce = async (target: number) => {
@@ -236,6 +240,7 @@ const webgpuBruteForce = async (target: number) => {
     start: 0,
     end: TOTAL_INVOCATIONS_PER_DISPATCH * TOTAL_DISPATCHES
   }
+  bruteforceStopTime.value = Date.now()
 }
 
 // Create a buffer for var<storage, read_write> on the GPU
@@ -288,6 +293,7 @@ const resetState = () => {
   foundSteamIds.value = []
   webworkersProgress.value = []
   webgpuProgress.value = { current: 0, start: 0, end: 0 }
+  bruteforceStopTime.value = null
 }
 </script>
 
@@ -336,6 +342,10 @@ const resetState = () => {
         }})...
       </p>
       <p>This process may take a while. Please be patient.</p>
+      <p v-if="bruteforceStopTime == null">
+        Elapsed time: {{ Date.now() - bruteforceStartTime }}ms
+      </p>
+      <p v-else>Time taken: {{ bruteforceStopTime - bruteforceStartTime }}ms</p>
       <h3>Found Steam IDs</h3>
       <ul>
         <li v-for="steamId in foundSteamIds" :key="steamId">
