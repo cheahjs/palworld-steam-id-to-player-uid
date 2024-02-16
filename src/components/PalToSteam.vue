@@ -104,7 +104,7 @@ const webgpuBruteForce = async (target: number) => {
   // create a local buffer to hold our computation input
   const localWorkBuffer = new Uint8Array(TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE)
   // create a buffer on the GPU to copy input data
-  // const mappedWorkBuffer = createOnGpuMapped(device, 'mapped: input_data', workBuffer.size)
+  const mappedWorkBuffer = createOnGpuMapped(device, 'staging: input_data', workBuffer.size)
   // create a buffer on the GPU to hold our computation output
   const outputBuffer = createOnGpuBuffer(
     device,
@@ -141,11 +141,10 @@ const webgpuBruteForce = async (target: number) => {
         (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH
       )
     }
-    device.queue.writeBuffer(workBuffer, 0, localWorkBuffer.buffer, 0, localWorkBuffer.byteLength)
     // Encode commands to do the computation
     const encoder = device.createCommandEncoder()
     // // Copy the mapped buffer to the work buffer
-    // encoder.copyBufferToBuffer(mappedWorkBuffer, 0, workBuffer, 0, workBuffer.size);
+    encoder.copyBufferToBuffer(mappedWorkBuffer, 0, workBuffer, 0, workBuffer.size);
     const pass = encoder.beginComputePass()
     pass.setPipeline(pipeline)
     pass.setBindGroup(0, bindGroup)
@@ -184,7 +183,15 @@ const webgpuBruteForce = async (target: number) => {
       localWorkBuffer,
       (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
       (i + 2) * TOTAL_INVOCATIONS_PER_DISPATCH
-    )
+    ).then(() => {
+      device.queue.writeBuffer(
+        mappedWorkBuffer,
+        0,
+        localWorkBuffer.buffer,
+        localWorkBuffer.byteOffset,
+        localWorkBuffer.byteLength
+      )
+    })
 
     await Promise.all([resultsDonePromise, nextBufferPromise])
 
@@ -288,28 +295,16 @@ const resetState = () => {
     </p>
     <form @submit.prevent="playerUidToSteamId" v-if="!bruteforcing">
       <label class="label">Palworld Player UID (Hex)</label>
-      <input
-        v-model="playerUidInput"
-        type="text"
-        placeholder="Enter your Palworld Player UID in hexadecimal"
-        required
-        minlength="8"
-        maxlength="8"
-        pattern="[0-9a-fA-F]{8}"
-      /><br />
+      <input v-model="playerUidInput" type="text" placeholder="Enter your Palworld Player UID in hexadecimal" required
+        minlength="8" maxlength="8" pattern="[0-9a-fA-F]{8}" /><br />
       <label class="label">Bruteforce method</label>
       <select v-model="bruteforceMethod">
         <option v-if="webgpuAvailable" value="webgpu">WebGPU (GPU)</option>
-        <option value="webworkers">Web Workers (CPU)</option></select
-      ><br />
+        <option value="webworkers">Web Workers (CPU)</option>
+      </select><br />
       <label v-if="bruteforceMethod == 'webworkers'" class="label">Number of Web Workers</label>
-      <input
-        v-if="bruteforceMethod == 'webworkers'"
-        type="number"
-        min="1"
-        step="1"
-        v-model="webworkersThreadCount"
-      /><br />
+      <input v-if="bruteforceMethod == 'webworkers'" type="number" min="1" step="1"
+        v-model="webworkersThreadCount" /><br />
       <button type="submit">Convert</button>
     </form>
     <div v-else>
