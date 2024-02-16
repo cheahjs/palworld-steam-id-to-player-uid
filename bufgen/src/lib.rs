@@ -19,7 +19,7 @@ pub fn generate_buffer(start: u32, end: u32) -> Vec<u8> {
     let mut steam_string = [0u8; 20];
     for steam_account_id in start..(end) {
         get_steam_id_from_account_id(steam_account_id).numtoa_str(10, &mut steam_string);
-        let offset_start = (steam_account_id - start) as usize * 34;
+        let offset_start = (steam_account_id - start) as usize * 36;
         // for i in 0..17 {
         //     buffer[offset_start + (i * 2)] = steam_string[i];
         // }
