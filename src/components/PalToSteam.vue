@@ -91,7 +91,7 @@ const webgpuBruteForce = async (target: number) => {
   })
 
   const WORKGROUP_SIZE = 64
-  const DISPATCH_GROUP_SIZE = 2048
+  const DISPATCH_GROUP_SIZE = 32768
   const TOTAL_INVOCATIONS_PER_DISPATCH = WORKGROUP_SIZE * DISPATCH_GROUP_SIZE
   const TOTAL_DISPATCHES = Math.ceil(2 ** 32 / TOTAL_INVOCATIONS_PER_DISPATCH)
   const PER_INPUT_SIZE = 9 * 4 // 9 32-bit integers
@@ -189,22 +189,21 @@ const webgpuBruteForce = async (target: number) => {
     }
 
     // Read the results
-    // previousPromise[i % 2] = (async () => {
-    //   await stagingResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
-    //   const result = new Uint32Array(stagingResultBuffers[i % 2].getMappedRange().slice(0))
-    //   stagingResultBuffers[i % 2].unmap()
-    //   resultWorker.postMessage(
-    //     {
-    //       start: i * TOTAL_INVOCATIONS_PER_DISPATCH,
-    //       end: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
-    //       resultBuffer: result
-    //     },
-    //     [result.buffer]
-    //   )
-    // })()
-    previousPromise[i % 2] = device.queue.onSubmittedWorkDone()
+    previousPromise[i % 2] = (async () => {
+      await stagingResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
+      const result = new Uint32Array(stagingResultBuffers[i % 2].getMappedRange().slice(0))
+      stagingResultBuffers[i % 2].unmap()
+      resultWorker.postMessage(
+        {
+          start: i * TOTAL_INVOCATIONS_PER_DISPATCH,
+          end: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
+          resultBuffer: result
+        },
+        [result.buffer]
+      )
+    })()
 
-    if (i % 32 == 0) {
+    if (i % 8 == 0) {
       const progress = {
         current: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
         start: 0,
@@ -214,6 +213,11 @@ const webgpuBruteForce = async (target: number) => {
     }
   }
   await Promise.all(previousPromise)
+  webgpuProgress.value = {
+    current: TOTAL_INVOCATIONS_PER_DISPATCH * TOTAL_DISPATCHES,
+    start: 0,
+    end: TOTAL_INVOCATIONS_PER_DISPATCH * TOTAL_DISPATCHES
+  }
 }
 
 // Create a buffer for var<storage, read_write> on the GPU
@@ -239,19 +243,6 @@ const createUniformBuffer = (device: GPUDevice, label: string, size: number) => 
     label: label,
     size: size,
     usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_SRC | GPUBufferUsage.COPY_DST
-  })
-}
-
-// Create a mapped buffer on the GPU
-const createOnGpuMapped = (device: GPUDevice, label: string, size: number) => {
-  // Align to 4 bytes
-  if (size % 4 != 0) {
-    size += 4 - (size % 4)
-  }
-  return device.createBuffer({
-    label: label,
-    size: size,
-    usage: GPUBufferUsage.COPY_SRC | GPUBufferUsage.MAP_WRITE
   })
 }
 
