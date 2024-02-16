@@ -65,6 +65,8 @@ const webworkerBruteForce = async (target: number) => {
 }
 
 const webgpuBruteForce = async (target: number) => {
+  // Init bufgen
+  await init()
   // Setup WebGPU for compute shader
   const adapter = await navigator.gpu?.requestAdapter({
     powerPreference: 'high-performance'
@@ -101,10 +103,12 @@ const webgpuBruteForce = async (target: number) => {
     'input_data',
     TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
   )
-  // create a local buffer to hold our computation input
-  const localWorkBuffer = new Uint8Array(TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE)
-  // create a buffer on the GPU to copy input data
-  const mappedWorkBuffer = createOnGpuMapped(device, 'staging: input_data', workBuffer.size)
+  const hardwareConcurrency = navigator.hardwareConcurrency || 1;
+  // create local buffers to hold our computation input
+  let localWorkBuffers: Uint8Array[] = []
+  for (let i = 0; i < hardwareConcurrency; i++) {
+    localWorkBuffers.push(generate_buffer(i * TOTAL_INVOCATIONS_PER_DISPATCH, (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH))
+  }
   // create a buffer on the GPU to hold our computation output
   const outputBuffer = createOnGpuBuffer(
     device,
@@ -135,16 +139,12 @@ const webgpuBruteForce = async (target: number) => {
   for (let i = 0; i < TOTAL_DISPATCHES; i++) {
     if (i == 0) {
       // Generate the first buffer
-      await generateInputBuffer(
-        localWorkBuffer,
-        i * TOTAL_INVOCATIONS_PER_DISPATCH,
-        (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH
-      )
+      localWorkBuffer = generate_buffer(0, TOTAL_INVOCATIONS_PER_DISPATCH)
     }
     // Encode commands to do the computation
     const encoder = device.createCommandEncoder()
-    // // Copy the mapped buffer to the work buffer
-    encoder.copyBufferToBuffer(mappedWorkBuffer, 0, workBuffer, 0, workBuffer.size);
+    // Copy the local buffer to the GPU buffer
+    device.queue.writeBuffer(workBuffer, 0, localWorkBuffer.buffer, localWorkBuffer.byteOffset, localWorkBuffer.byteLength)
     const pass = encoder.beginComputePass()
     pass.setPipeline(pipeline)
     pass.setBindGroup(0, bindGroup)
@@ -179,18 +179,9 @@ const webgpuBruteForce = async (target: number) => {
     })
 
     // Start prepping the next buffer
-    let nextBufferPromise = generateInputBuffer(
-      localWorkBuffer,
-      (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
-      (i + 2) * TOTAL_INVOCATIONS_PER_DISPATCH
-    ).then(() => {
-      device.queue.writeBuffer(
-        mappedWorkBuffer,
-        0,
-        localWorkBuffer.buffer,
-        localWorkBuffer.byteOffset,
-        localWorkBuffer.byteLength
-      )
+    let nextBufferPromise = new Promise<void>((resolve) => {
+      localWorkBuffer = generate_buffer((i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH, (i + 2) * TOTAL_INVOCATIONS_PER_DISPATCH)
+      resolve()
     })
 
     await Promise.all([resultsDonePromise, nextBufferPromise])
@@ -202,15 +193,6 @@ const webgpuBruteForce = async (target: number) => {
         end: TOTAL_INVOCATIONS_PER_DISPATCH * TOTAL_DISPATCHES
       }
       webgpuProgress.value = progress
-    }
-  }
-}
-
-const generateInputBuffer = async (buffer: Uint8Array, start: number, end: number) => {
-  for (let i = 0; i < end - start; i++) {
-    let steamId = steamAccountIdToString(start + i)
-    for (let j = 0; j < 17; j++) {
-      buffer[i * 36 + j * 2] = steamId.charCodeAt(j)
     }
   }
 }

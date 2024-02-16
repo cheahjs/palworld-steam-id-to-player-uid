@@ -1,0 +1,14 @@
+{
+  "name": "bufgen",
+  "version": "0.1.0",
+  "files": [
+    "bufgen_bg.wasm",
+    "bufgen.js",
+    "bufgen.d.ts"
+  ],
+  "module": "bufgen.js",
+  "types": "bufgen.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}
