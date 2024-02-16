@@ -95,216 +95,109 @@ const webgpuBruteForce = async (target: number) => {
   const TOTAL_DISPATCHES = Math.ceil(2 ** 32 / TOTAL_INVOCATIONS_PER_DISPATCH)
   const PER_INPUT_SIZE = 9 * 4 // 9 32-bit integers
 
-  // Create two sets of buffers and bind groups to ping-pong between them
-  // Create a buffer on the GPU to hold our computation input
-  const workBuffers = [
-    createOnGpuBuffer(
-      device,
-      'input_data_0',
-      TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
-    ),
-    createOnGpuBuffer(
-      device,
-      'input_data_1',
-      TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
-    )
-  ]
-  // Create local buffers to copy from
-  const localWorkBuffers = [
-    new Uint8Array(TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE),
-    new Uint8Array(TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE)
-  ]
-  // Create a buffer on the GPU to hold our computation output
-  const outputBuffers = [
-    createOnGpuBuffer(
-      device,
-      'output_result_0',
-      TOTAL_INVOCATIONS_PER_DISPATCH * 4
-    ),
-    createOnGpuBuffer(
-      device,
-      'output_result_1',
-      TOTAL_INVOCATIONS_PER_DISPATCH * 4
-    )
-  ]
-  // Create a buffer on the GPU to get a copy of the results
-  const stagingResultBuffers = [
-    createStagingBuffer(
-      device,
-      'staging: output_result_0',
-      outputBuffers[0].size
-    ),
-    createStagingBuffer(
-      device,
-      'staging: output_result_1',
-      outputBuffers[1].size
-    )
-  ]
+  // create a buffer on the GPU to hold our computation input
+  const workBuffer = createOnGpuBuffer(
+    device,
+    'input_data',
+    TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
+  )
+  // create a local buffer to hold our computation input
+  const localWorkBuffer = new Uint8Array(TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE)
+  // create a buffer on the GPU to copy input data
+  const mappedWorkBuffer = createOnGpuMapped(device, 'staging: input_data', workBuffer.size)
+  // create a buffer on the GPU to hold our computation output
+  const outputBuffer = createOnGpuBuffer(
+    device,
+    'output_result',
+    TOTAL_INVOCATIONS_PER_DISPATCH * 4
+  )
+  // create a buffer on the GPU to get a copy of the results
+  const stagingResultBuffer = createStagingBuffer(
+    device,
+    'staging: output_result',
+    outputBuffer.size
+  )
   // create a buffer on the GPU to hold our target hash
   const targetHashBuffer = createUniformBuffer(device, 'target_hash', 4)
   device.queue.writeBuffer(targetHashBuffer, 0, new Uint32Array([target]))
 
   // Setup a bindGroup to tell the shader which buffer to use for the computation
-  const bindGroups = [
-    device.createBindGroup({
-      label: 'bindGroup for work buffer 0',
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: workBuffers[0] } },
-        { binding: 1, resource: { buffer: outputBuffers[0] } },
-        { binding: 2, resource: { buffer: targetHashBuffer } }
-      ],
-    }),
-    device.createBindGroup({
-      label: 'bindGroup for work buffer 1',
-      layout: pipeline.getBindGroupLayout(0),
-      entries: [
-        { binding: 0, resource: { buffer: workBuffers[1] } },
-        { binding: 1, resource: { buffer: outputBuffers[1] } },
-        { binding: 2, resource: { buffer: targetHashBuffer } }
-      ]
-    })
-  ]
+  const bindGroup = device.createBindGroup({
+    label: 'bindGroup for work buffer',
+    layout: pipeline.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: workBuffer } },
+      { binding: 1, resource: { buffer: outputBuffer } },
+      { binding: 2, resource: { buffer: targetHashBuffer } }
+    ]
+  })
 
-  for (let i = 0; i < TOTAL_DISPATCHES / 2; i++) {
+  for (let i = 0; i < TOTAL_DISPATCHES; i++) {
     if (i == 0) {
-      // Preload the first buffer
-      await generateInputBuffer(localWorkBuffers[0], 0, TOTAL_INVOCATIONS_PER_DISPATCH).then(() => {
-        device.queue.writeBuffer(
-          workBuffers[0],
-          0,
-          localWorkBuffers[0].buffer,
-          localWorkBuffers[0].byteOffset,
-          localWorkBuffers[0].byteLength
-        )
-      })
-      await generateInputBuffer(localWorkBuffers[1], TOTAL_INVOCATIONS_PER_DISPATCH, TOTAL_INVOCATIONS_PER_DISPATCH * 2).then(() => {
-        device.queue.writeBuffer(
-          workBuffers[1],
-          0,
-          localWorkBuffers[1].buffer,
-          localWorkBuffers[1].byteOffset,
-          localWorkBuffers[1].byteLength
-        )
-      })
+      // Generate the first buffer
+      await generateInputBuffer(
+        localWorkBuffer,
+        i * TOTAL_INVOCATIONS_PER_DISPATCH,
+        (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH
+      )
     }
-    // First set to run
-    {
-      // Encode commands to do the computation
-      const encoder = device.createCommandEncoder()
-      const pass = encoder.beginComputePass()
-      pass.setPipeline(pipeline)
-      pass.setBindGroup(0, bindGroups[0])
-      pass.dispatchWorkgroups(DISPATCH_GROUP_SIZE)
-      pass.end()
+    // Encode commands to do the computation
+    const encoder = device.createCommandEncoder()
+    // // Copy the mapped buffer to the work buffer
+    encoder.copyBufferToBuffer(mappedWorkBuffer, 0, workBuffer, 0, workBuffer.size);
+    const pass = encoder.beginComputePass()
+    pass.setPipeline(pipeline)
+    pass.setBindGroup(0, bindGroup)
+    pass.dispatchWorkgroups(DISPATCH_GROUP_SIZE)
+    pass.end()
 
-      // Encode a command to copy the results to a mappable buffer.
-      encoder.copyBufferToBuffer(outputBuffers[0], 0, stagingResultBuffers[0], 0, stagingResultBuffers[0].size)
+    // Encode a command to copy the results to a mappable buffer.
+    encoder.copyBufferToBuffer(outputBuffer, 0, stagingResultBuffer, 0, stagingResultBuffer.size)
 
-      // Finish encoding and submit the commands
-      const commandBuffer_0 = encoder.finish()
-      device.queue.submit([commandBuffer_0])
-    }
+    // Finish encoding and submit the commands
+    const commandBuffer = encoder.finish()
+    device.queue.submit([commandBuffer])
 
     // Wait for the computation to finish
-    let workDonePromise_0 = device.queue.onSubmittedWorkDone()
+    let workDonePromise = device.queue.onSubmittedWorkDone()
 
     // Read the results
-    let resultsDonePromise_0 = workDonePromise_0.then(async () => {
-      await stagingResultBuffers[0].mapAsync(GPUMapMode.READ)
-      const result = new Uint32Array(stagingResultBuffers[0].getMappedRange().slice(0))
-      stagingResultBuffers[0].unmap()
+    let resultsDonePromise = workDonePromise.then(async () => {
+      await stagingResultBuffer.mapAsync(GPUMapMode.READ)
+      const result = new Uint32Array(stagingResultBuffer.getMappedRange().slice(0))
+      stagingResultBuffer.unmap()
       for (let j = 0; j < result.length; j++) {
         if (result[j] != 0) {
           console.log(
             'Steam ID found at',
-            steamAccountIdToString(((i * 2)) * TOTAL_INVOCATIONS_PER_DISPATCH + j),
+            steamAccountIdToString(i * TOTAL_INVOCATIONS_PER_DISPATCH + j),
             result[j]
           )
-          foundSteamIds.value.push(((i * 2)) * TOTAL_INVOCATIONS_PER_DISPATCH + j)
+          foundSteamIds.value.push(i * TOTAL_INVOCATIONS_PER_DISPATCH + j)
         }
       }
     })
 
     // Start prepping the next buffer
-    let nextBufferPromise_0 = generateInputBuffer(
-      localWorkBuffers[0],
-      ((i + 1) * 2) * TOTAL_INVOCATIONS_PER_DISPATCH,
-      (((i + 1) * 2) + 1) * TOTAL_INVOCATIONS_PER_DISPATCH
-    )
-
-    // We can copy once the queue is done and the next buffer is prepped
-    let copyDonePromise_0 = Promise.all([workDonePromise_0, nextBufferPromise_0]).then(() => {
+    let nextBufferPromise = generateInputBuffer(
+      localWorkBuffer,
+      (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
+      (i + 2) * TOTAL_INVOCATIONS_PER_DISPATCH
+    ).then(() => {
       device.queue.writeBuffer(
-        workBuffers[0],
+        mappedWorkBuffer,
         0,
-        localWorkBuffers[0].buffer,
-        localWorkBuffers[0].byteOffset,
-        localWorkBuffers[0].byteLength
+        localWorkBuffer.buffer,
+        localWorkBuffer.byteOffset,
+        localWorkBuffer.byteLength
       )
     })
 
-    // 2nd set to run
-    {
-      // Encode commands to do the computation
-      const encoder = device.createCommandEncoder()
-      const pass = encoder.beginComputePass()
-      pass.setPipeline(pipeline)
-      pass.setBindGroup(0, bindGroups[1])
-      pass.dispatchWorkgroups(DISPATCH_GROUP_SIZE)
-      pass.end()
+    await Promise.all([resultsDonePromise, nextBufferPromise])
 
-      // Encode a command to copy the results to a mappable buffer.
-      encoder.copyBufferToBuffer(outputBuffers[1], 0, stagingResultBuffers[1], 0, stagingResultBuffers[1].size)
-
-      // Finish encoding and submit the commands
-      const commandBuffer_1 = encoder.finish()
-      device.queue.submit([commandBuffer_1])
-    }
-
-    // Wait for the computation to finish
-    let workDonePromise_1 = device.queue.onSubmittedWorkDone()
-
-    // Read the results
-    let resultsDonePromise_1 = workDonePromise_1.then(async () => {
-      await stagingResultBuffers[1].mapAsync(GPUMapMode.READ)
-      const result = new Uint32Array(stagingResultBuffers[1].getMappedRange().slice(0))
-      stagingResultBuffers[1].unmap()
-      for (let j = 0; j < result.length; j++) {
-        if (result[j] != 0) {
-          console.log(
-            'Steam ID found at',
-            steamAccountIdToString(((i * 2) + 1) * TOTAL_INVOCATIONS_PER_DISPATCH + j),
-            result[j]
-          )
-          foundSteamIds.value.push(((i * 2) + 1) * TOTAL_INVOCATIONS_PER_DISPATCH + j)
-        }
-      }
-    })
-
-    // Start prepping the next buffer
-    let nextBufferPromise_1 = generateInputBuffer(
-      localWorkBuffers[1],
-      (((i + 1) * 2) + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
-      ((i + 2) * 2) * TOTAL_INVOCATIONS_PER_DISPATCH
-    )
-    
-    // We can copy once the queue is done and the next buffer is prepped
-    let copyDonePromise_1 = Promise.all([workDonePromise_1, nextBufferPromise_1]).then(() => {
-      device.queue.writeBuffer(
-        workBuffers[1],
-        0,
-        localWorkBuffers[1].buffer,
-        localWorkBuffers[1].byteOffset,
-        localWorkBuffers[1].byteLength
-      )
-    })
-
-    await Promise.all([copyDonePromise_0, copyDonePromise_1])
-
-    if (i % 8 == 0) {
+    if (i % 16 == 0) {
       const progress = {
-        current: (i * 2) * TOTAL_INVOCATIONS_PER_DISPATCH,
+        current: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
         start: 0,
         end: TOTAL_INVOCATIONS_PER_DISPATCH * TOTAL_DISPATCHES
       }
