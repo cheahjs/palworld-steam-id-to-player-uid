@@ -2,6 +2,7 @@
 import { ref } from 'vue'
 import BruteforceWorker from '../worker/PalToSteamWorker?worker'
 import BufgenWorker from '../worker/BufgenWorker?worker'
+import WebGPUResultWorker from '../worker/WebGPUResultWorker?worker'
 import computeShaderString from './compute_shader.wgsl?raw'
 
 const playerUidInput = ref('')
@@ -45,7 +46,7 @@ const webworkerBruteForce = async (target: number) => {
       end: end
     })
     tasks.push(
-      new Promise((resolve, _reject) => {
+      new Promise((resolve) => {
         worker.onmessage = (e) => {
           if (e.data.progress) {
             webworkersProgress.value[i] = e.data.progress
@@ -96,12 +97,6 @@ const webgpuBruteForce = async (target: number) => {
   const TOTAL_DISPATCHES = Math.ceil(2 ** 32 / TOTAL_INVOCATIONS_PER_DISPATCH)
   const PER_INPUT_SIZE = 9 * 4 // 9 32-bit integers
 
-  // create a buffer on the GPU to hold our computation input
-  const workBuffer = createOnGpuBuffer(
-    device,
-    'input_data',
-    TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
-  )
   const hardwareConcurrency = Math.max(navigator.hardwareConcurrency || 1, 16)
   // store local buffers to hold our computation input
   const localInputBuffers: { [id: number]: Uint8Array } = {}
@@ -142,33 +137,80 @@ const webgpuBruteForce = async (target: number) => {
     }
   }
   fillBuffers()
+  // create worker to process results
+  let resultWorker = new WebGPUResultWorker()
+  resultWorker.onmessage = (e) => {
+    if (e.data.account_id) {
+      console.log('Steam ID found', e.data.account_id)
+      foundSteamIds.value.push(e.data.account_id)
+    }
+  }
+  // Create two of each buffer
+  // create a buffer on the GPU to hold our computation input
+  const workBuffers = [
+    createOnGpuBuffer(
+      device,
+      'input_data_0',
+      TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
+    ),
+    createOnGpuBuffer(
+      device,
+      'input_data_1',
+      TOTAL_INVOCATIONS_PER_DISPATCH * PER_INPUT_SIZE
+    )
+  ]
   // create a buffer on the GPU to hold our computation output
-  const outputBuffer = createOnGpuBuffer(
-    device,
-    'output_result',
-    TOTAL_INVOCATIONS_PER_DISPATCH * 4
-  )
+  const outputBuffers = [
+    createOnGpuBuffer(
+      device,
+      'output_result_0',
+      TOTAL_INVOCATIONS_PER_DISPATCH * 4
+    ),
+    createOnGpuBuffer(
+      device,
+      'output_result_1',
+      TOTAL_INVOCATIONS_PER_DISPATCH * 4
+    )
+  ]
   // create a buffer on the GPU to get a copy of the results
-  const stagingResultBuffer = createStagingBuffer(
-    device,
-    'staging: output_result',
-    outputBuffer.size
-  )
+  const stagingResultBuffers = [
+    createStagingBuffer(
+      device,
+      'staging: output_result_0',
+      outputBuffers[0].size
+    ),
+    createStagingBuffer(
+      device,
+      'staging: output_result_1',
+      outputBuffers[1].size
+    )
+  ]
   // create a buffer on the GPU to hold our target hash
   const targetHashBuffer = createUniformBuffer(device, 'target_hash', 4)
   device.queue.writeBuffer(targetHashBuffer, 0, new Uint32Array([target]))
 
   // Setup a bindGroup to tell the shader which buffer to use for the computation
-  const bindGroup = device.createBindGroup({
-    label: 'bindGroup for work buffer',
-    layout: pipeline.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: workBuffer } },
-      { binding: 1, resource: { buffer: outputBuffer } },
-      { binding: 2, resource: { buffer: targetHashBuffer } }
-    ]
-  })
-
+  const bindGroups = [
+    device.createBindGroup({
+      label: 'bindGroup for work buffer 0',
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: workBuffers[0] } },
+        { binding: 1, resource: { buffer: outputBuffers[0] } },
+        { binding: 2, resource: { buffer: targetHashBuffer } }
+      ]
+    }),
+    device.createBindGroup({
+      label: 'bindGroup for work buffer 1',
+      layout: pipeline.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: workBuffers[1] } },
+        { binding: 1, resource: { buffer: outputBuffers[1] } },
+        { binding: 2, resource: { buffer: targetHashBuffer } }
+      ]
+    })
+  ]
+  let previousPromise: Promise<void>[] = [new Promise((resolve) => resolve()), new Promise((resolve) => resolve())]
   for (let i = 0; i < TOTAL_DISPATCHES; i++) {
     // Wait for buffer to be filled
     await new Promise<void>((resolve) => {
@@ -183,47 +225,48 @@ const webgpuBruteForce = async (target: number) => {
     })
     const inputBuffer = localInputBuffers[i]
     delete localInputBuffers[i]
-    // Encode commands to do the computation
-    const encoder = device.createCommandEncoder()
-    // Copy the local buffer to the GPU buffer
-    device.queue.writeBuffer(
-      workBuffer,
-      0,
-      inputBuffer.buffer,
-      inputBuffer.byteOffset,
-      inputBuffer.byteLength
-    )
-    const pass = encoder.beginComputePass()
-    pass.setPipeline(pipeline)
-    pass.setBindGroup(0, bindGroup)
-    pass.dispatchWorkgroups(DISPATCH_GROUP_SIZE)
-    pass.end()
+    // Wait for the previous computation to finish before starting the next one
+    await previousPromise[i % 2]
+    {
+      // Copy the local buffer to the GPU buffer
+      device.queue.writeBuffer(
+        workBuffers[i % 2],
+        0,
+        inputBuffer.buffer,
+        inputBuffer.byteOffset,
+        inputBuffer.byteLength
+      )
+      // Encode commands to do the computation
+      const encoder = device.createCommandEncoder()
+      const pass = encoder.beginComputePass()
+      pass.setPipeline(pipeline)
+      pass.setBindGroup(0, bindGroups[i % 2])
+      pass.dispatchWorkgroups(DISPATCH_GROUP_SIZE)
+      pass.end()
 
-    // Encode a command to copy the results to a mappable buffer.
-    encoder.copyBufferToBuffer(outputBuffer, 0, stagingResultBuffer, 0, stagingResultBuffer.size)
+      // Copy the results to a staging buffer
+      encoder.copyBufferToBuffer(outputBuffers[i % 2], 0, stagingResultBuffers[i % 2], 0, stagingResultBuffers[i % 2].size)
 
-    // Finish encoding and submit the commands
-    const commandBuffer = encoder.finish()
-    device.queue.submit([commandBuffer])
+      // Finish encoding and submit the commands
+      const commandBuffer = encoder.finish()
+      device.queue.submit([commandBuffer])
+    }
 
     // Wait for the computation to finish
-    let workDonePromise = device.queue.onSubmittedWorkDone()
+    let computeDonePromise = device.queue.onSubmittedWorkDone()
 
     // Read the results
-    await workDonePromise.then(async () => {
-      await stagingResultBuffer.mapAsync(GPUMapMode.READ)
-      const result = new Uint32Array(stagingResultBuffer.getMappedRange().slice(0))
-      stagingResultBuffer.unmap()
-      for (let j = 0; j < result.length; j++) {
-        if (result[j] != 0) {
-          console.log(
-            'Steam ID found at',
-            steamAccountIdToString(i * TOTAL_INVOCATIONS_PER_DISPATCH + j),
-            result[j]
-          )
-          foundSteamIds.value.push(i * TOTAL_INVOCATIONS_PER_DISPATCH + j)
-        }
-      }
+    previousPromise[i % 2] = computeDonePromise.then(async () => {
+      await stagingResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
+      const result = new Uint32Array(stagingResultBuffers[i % 2].getMappedRange().slice(0))
+      stagingResultBuffers[i % 2].unmap()
+      resultWorker.postMessage(
+        {
+          start: i * TOTAL_INVOCATIONS_PER_DISPATCH,
+          end: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
+          resultBuffer: result,
+        }, [result.buffer]
+      )
     })
 
     if (i % 16 == 0) {
@@ -239,6 +282,7 @@ const webgpuBruteForce = async (target: number) => {
   bufgenWorkers.forEach(worker => {
     worker.terminate()
   });
+  resultWorker.terminate()
 }
 
 // Create a buffer for var<storage, read_write> on the GPU
