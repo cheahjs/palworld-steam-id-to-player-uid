@@ -252,11 +252,8 @@ const webgpuBruteForce = async (target: number) => {
       device.queue.submit([commandBuffer])
     }
 
-    // Wait for the computation to finish
-    let computeDonePromise = device.queue.onSubmittedWorkDone()
-
     // Read the results
-    previousPromise[i % 2] = computeDonePromise.then(async () => {
+    previousPromise[i % 2] = (async () => {
       await stagingResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
       const result = new Uint32Array(stagingResultBuffers[i % 2].getMappedRange().slice(0))
       stagingResultBuffers[i % 2].unmap()
@@ -267,7 +264,7 @@ const webgpuBruteForce = async (target: number) => {
           resultBuffer: result,
         }, [result.buffer]
       )
-    })
+    })()
 
     if (i % 16 == 0) {
       const progress = {
