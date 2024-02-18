@@ -183,7 +183,14 @@ const webgpuBruteForce = async (target: number) => {
       pass.dispatchWorkgroups(DISPATCH_GROUP_SIZE)
       pass.end()
 
-      // Copy the signal result to a staging buffer
+      // Copy the results to a staging buffer
+      encoder.copyBufferToBuffer(
+        outputBuffers[i % 2],
+        0,
+        stagingResultBuffers[i % 2],
+        0,
+        stagingResultBuffers[i % 2].size
+      )
       encoder.copyBufferToBuffer(
         signalBuffers[i % 2],
         0,
@@ -205,17 +212,6 @@ const webgpuBruteForce = async (target: number) => {
       )
       stagingSignalResultBuffers[i % 2].unmap()
       if (signalResult[0] > 0) {
-        // Issue copy if we found a result
-        const encoder = device.createCommandEncoder()
-        encoder.copyBufferToBuffer(
-          outputBuffers[i % 2],
-          0,
-          stagingResultBuffers[i % 2],
-          0,
-          stagingResultBuffers[i % 2].size
-        )
-        const commandBuffer = encoder.finish()
-        device.queue.submit([commandBuffer])
         await stagingResultBuffers[i % 2].mapAsync(GPUMapMode.READ)
         const result = new Uint32Array(stagingResultBuffers[i % 2].getMappedRange().slice(0))
         stagingResultBuffers[i % 2].unmap()
