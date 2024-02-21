@@ -1,0 +1,38 @@
+# Create a GitHub Action to run CI checks (e.g. linting, tests, etc.) on every push
+name: CI
+
+on: [push]
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Set up Node.js
+      uses: actions/setup-node@v1
+      with:
+        node-version: 20
+    
+    - name: Set up Rust
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Install naga-cli
+      run: cargo install naga-cli
+
+    - name: Install NPM dependencies
+      run: npm ci
+
+    - name: Run linting
+      run: npm run lint
+      if: always()
+
+    - name: Run formatting
+      run: npm run format
+      if: always()
+    
+    - name: Run Naga validation
+      run: naga ./src/components/compute_shader.wgsl
+      if: always()

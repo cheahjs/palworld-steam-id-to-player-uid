@@ -13,44 +13,44 @@ fn main(
     let in_ptr = &in_d;
     steam_itoa(in_ptr, u64(start_account_id + i, 17825793u));
     // Hash the buffer
-    const len = 34;
-    // static const uint64 k2 = 0x9ae16a3b2f90404fULL;
-    const k2 = u64(797982799u, 2598464059u);
+    let len = 34u;
+    // static let uint64 k2 = 0x9ae16a3b2f90404fULL;
+    let k2 = u64(797982799u, 2598464059u);
 
     // uint64 mul = k2 + len * 2;
     // mul = 0x9ae16a3b2f90404f + (34 * 2) = 0x9ae16a3b2f90404f + 68 = 0x9ae16a3b2f9040bb
     // let mul = add_u64_u64(k2, u32_to_u64(len * 2));
-    const mul = u64(797982867u, 2598464059u);
+    let mul = u64(797982867u, 2598464059u);
     // uint64 a = Fetch64(s) * k2;
     // let a = mul_u64_u64(Fetch64(i, 0), k2);
     // Fetch64(0) = 15199876379181111
     // a = 169635456293653574892571274399699193
-    const a = vec2(3366441209u, 410069887u);
+    let a = vec2(3366441209u, 410069887u);
     // uint64 b = Fetch64(s + 8);
-    let b = Fetch64(in_ptr, 8);
+    let b = Fetch64(in_ptr, 8u);
     // uint64 c = Fetch64(s + len - 24);
     // let c = Fetch64(i, 10);
-    let c = Fetch64(in_ptr, len - 24);
+    let c = Fetch64(in_ptr, len - 24u);
     // uint64 d = Fetch64(s + len - 32);
     // let d = Fetch64(i, 2) = 13792505790529590;
     // let d = Fetch64(i, len - 32);
-    const d = u64(3473462u, 3211318u);
+    let d = u64(3473462u, 3211318u);
     // uint64 e = Fetch64(s + 16) * k2;
-    let e = mul_u64_u64(Fetch64(in_ptr, 16), k2);
+    let e = mul_u64_u64(Fetch64(in_ptr, 16u), k2);
     // uint64 f = Fetch64(s + 24) * 9;
-    let f = mul_u64_u64(Fetch64(in_ptr, 24), vec2(9, 0));
+    let f = mul_u64_u64(Fetch64(in_ptr, 24u), vec2(9u, 0u));
     // uint64 g = Fetch64(s + len - 8);
-    let g = Fetch64(in_ptr, len - 8);
+    let g = Fetch64(in_ptr, len - 8u);
     // uint64 h = Fetch64(s + len - 16) * mul;
-    let h = mul_u64_u64(Fetch64(in_ptr, len - 16), mul);
+    let h = mul_u64_u64(Fetch64(in_ptr, len - 16u), mul);
     // uint64 u = Rotate(a + g, 43) + (Rotate(b, 30) + c) * 9;
-    let u = add_u64_u64(Rotate(add_u64_u64(a, g), 43), mul_u64_u64(add_u64_u64(Rotate(b, 30), c), vec2(9u, 0u)));
+    let u = add_u64_u64(Rotate(add_u64_u64(a, g), 43u), mul_u64_u64(add_u64_u64(Rotate(b, 30u), c), vec2(9u, 0u)));
     // uint64 v = ((a + g) ^ d) + f + 1;
     let v = add_u64_u64(add_u64_u64(xor_u64_u64(add_u64_u64(a, g), d), f), vec2(1u, 0u));
     // uint64 w = bswap_64((u + v) * mul) + h;
     let w = add_u64_u64(bswap_64(mul_u64_u64(add_u64_u64(u, v), mul)), h);
     // uint64 x = Rotate(e + f, 42) + c;
-    let x = add_u64_u64(Rotate(add_u64_u64(e, f), 42), c);
+    let x = add_u64_u64(Rotate(add_u64_u64(e, f), 42u), c);
     // uint64 y = (bswap_64((v + w) * mul) + g) * mul;
     let y = mul_u64_u64(add_u64_u64(bswap_64(mul_u64_u64(add_u64_u64(v, w), mul)), g), mul);
     // uint64 z = e + f + c;
@@ -66,10 +66,6 @@ fn main(
 
     // Check if the hash is the target
     let init_bit: u32 = select(0u, 1u, hash == target_hash);
-    // let ipos: u32 = i / 4u;
-    // let shift: u32 = 8u * (i % 4u);
-    // let bit_set: u32 = init_bit << shift;
-    // atomicOr(&output_result[ipos], bit_set);
     output_result[i] = init_bit;
     if (init_bit == 1u) {
         signal_output = 1u;
@@ -211,7 +207,7 @@ fn xor_u64_u64(a: u64, b: u64) -> u64 {
 fn div_steam_u64_10(a: u64) -> vec3<u32> {
     var result = vec2(0u, 0u);
     var remainder = a;
-    const b = vec2(10u, 0u);
+    let b = vec2(10u, 0u);
 
     var count = 60u;
     var divisor = vec2(0u, 2684354560);
