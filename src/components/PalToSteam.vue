@@ -5,14 +5,19 @@ import BruteforceWorker from '../worker/PalToSteamWorker?worker'
 import WebGPUResultWorker from '../worker/WebGPUResultWorker?worker'
 import computeShaderString from './compute_shader.wgsl?raw'
 
-const playerUidInput = ref('')
+const playerUidInputs = ref([{ uid: '' }])
 const bruteforcing = ref(false)
 const bruteforceMethod = ref('webgpu')
 const webgpuAvailable = !!navigator.gpu
 const threadsAvailable = navigator.hardwareConcurrency
 const webworkersThreadCount = ref(threadsAvailable)
 const webworkersProgress = ref([{ current: 0, start: 0, end: 0 }])
-const foundSteamIds = ref([0])
+const foundSteamIds = ref([
+  {
+    accountId: 0,
+    targetHash: 0
+  }
+])
 const webgpuProgress = ref({ current: 0, start: 0, end: 0 })
 const webgpuDeviceName = ref('')
 const bruteforceStartTime = ref(0)
@@ -24,18 +29,18 @@ const steamAccountIdToString = (accountId: number) => {
 
 const playerUidToSteamId = async () => {
   resetState()
-  console.log('Brute forcing player UID to Steam ID', playerUidInput)
+  console.log('Brute forcing player UID to Steam ID', playerUidInputs)
   bruteforcing.value = true
   bruteforceStartTime.value = Date.now()
-
+  let targets = playerUidInputs.value.map((x) => parseInt(x.uid, 16))
   if (bruteforceMethod.value == 'webgpu') {
-    await webgpuBruteForce(parseInt(playerUidInput.value, 16))
+    await webgpuBruteForce(targets)
   } else if (bruteforceMethod.value == 'webworkers') {
-    await webworkerBruteForce(parseInt(playerUidInput.value, 16))
+    await webworkerBruteForce(targets)
   }
 }
 
-const webworkerBruteForce = async (target: number) => {
+const webworkerBruteForce = async (targets: number[]) => {
   const stride = Math.floor(2 ** 32 / webworkersThreadCount.value)
   const tasks = []
   for (let i = 0; i < webworkersThreadCount.value; i++) {
@@ -44,7 +49,7 @@ const webworkerBruteForce = async (target: number) => {
     const start = i * stride
     const end = i == webworkersThreadCount.value - 1 ? 2 ** 32 + 1 : (i + 1) * stride
     worker.postMessage({
-      target: target,
+      targets: targets,
       start: start,
       end: end
     })
@@ -55,7 +60,10 @@ const webworkerBruteForce = async (target: number) => {
             webworkersProgress.value[i] = e.data.progress
           } else if (e.data.accountId) {
             console.log('Steam ID found', e.data.accountId)
-            foundSteamIds.value.push(e.data.accountId)
+            foundSteamIds.value.push({
+              accountId: e.data.accountId,
+              targetHash: e.data.uid
+            })
           } else if (e.data.type == 'done') {
             console.log(`Worker ${i} done`)
             worker.terminate()
@@ -70,7 +78,7 @@ const webworkerBruteForce = async (target: number) => {
   bruteforceStopTime.value = Date.now()
 }
 
-const webgpuBruteForce = async (target: number) => {
+const webgpuBruteForce = async (targets: number[]) => {
   // Setup WebGPU for compute shader
   const adapter = await navigator.gpu?.requestAdapter({
     powerPreference: 'high-performance'
@@ -99,14 +107,16 @@ const webgpuBruteForce = async (target: number) => {
   const DISPATCH_GROUP_SIZE = 32768
   const TOTAL_INVOCATIONS_PER_DISPATCH = WORKGROUP_SIZE * DISPATCH_GROUP_SIZE
   const TOTAL_DISPATCHES = Math.ceil(2 ** 32 / TOTAL_INVOCATIONS_PER_DISPATCH)
-  const PER_INPUT_SIZE = 9 * 4 // 9 32-bit integers
 
   // create worker to process results
   let resultWorker = new WebGPUResultWorker()
   resultWorker.onmessage = (e) => {
     if (e.data.account_id) {
       console.log('Steam ID found', e.data.account_id)
-      foundSteamIds.value.push(e.data.account_id)
+      foundSteamIds.value.push({
+        accountId: e.data.account_id,
+        targetHash: e.data.hash
+      })
     }
   }
   // Create two of each buffer
@@ -134,9 +144,9 @@ const webgpuBruteForce = async (target: number) => {
     createStagingBuffer(device, 'staging: signal_result_0', 4),
     createStagingBuffer(device, 'staging: signal_result_1', 4)
   ]
-  // create a buffer on the GPU to hold our target hash
-  const targetHashBuffer = createUniformBuffer(device, 'target_hash', 4)
-  device.queue.writeBuffer(targetHashBuffer, 0, new Uint32Array([target]))
+  // create a buffer on the GPU to hold our target hashes
+  const targetHashBuffer = createOnGpuBuffer(device, 'target_hashes', targets.length * 4)
+  device.queue.writeBuffer(targetHashBuffer, 0, new Uint32Array(targets))
 
   // Setup a bindGroup to tell the shader which buffer to use for the computation
   const bindGroups = [
@@ -219,7 +229,8 @@ const webgpuBruteForce = async (target: number) => {
           {
             start: i * TOTAL_INVOCATIONS_PER_DISPATCH,
             end: (i + 1) * TOTAL_INVOCATIONS_PER_DISPATCH,
-            resultBuffer: result
+            resultBuffer: result,
+            targets: targets
           },
           [result.buffer]
         )
@@ -296,6 +307,13 @@ const resetState = () => {
   webgpuProgress.value = { current: 0, start: 0, end: 0 }
   bruteforceStopTime.value = null
 }
+
+const addUidField = () => {
+  playerUidInputs.value.push({ uid: '' })
+}
+const removeUid = (index: number) => {
+  playerUidInputs.value.splice(index, 1)
+}
 </script>
 
 <template>
@@ -311,16 +329,22 @@ const resetState = () => {
       are used when Steam is not available.
     </p>
     <form @submit.prevent="playerUidToSteamId" v-if="!bruteforcing">
+      <button type="button" @click="addUidField()">Add more UIDs to search</button>
       <label class="label">Palworld Player UID (Hex)</label>
-      <input
-        v-model="playerUidInput"
-        type="text"
-        placeholder="Enter your Palworld Player UID in hexadecimal"
-        required
-        minlength="8"
-        maxlength="8"
-        pattern="[0-9a-fA-F]{8}"
-      /><br />
+      <div v-for="(uidInput, index) in playerUidInputs" :key="index" class="uid-input-container">
+        <input
+          v-model="uidInput.uid"
+          type="text"
+          placeholder="Enter your Palworld Player UID in hexadecimal (eg 1234ABCD)"
+          required
+          minlength="8"
+          maxlength="8"
+          pattern="[0-9a-fA-F]{8}"
+        />
+        <button type="button" @click="removeUid(index)" v-show="index != 0" class="remove-button">
+          Remove
+        </button>
+      </div>
       <label class="label">Bruteforce method</label>
       <select v-model="bruteforceMethod">
         <option v-if="webgpuAvailable" value="webgpu">WebGPU (GPU)</option>
@@ -337,11 +361,12 @@ const resetState = () => {
       <button type="submit">Convert</button>
     </form>
     <div v-else>
-      <p>
-        Bruteforcing Steam IDs that match UID {{ playerUidInput }} ({{
-          parseInt(playerUidInput, 16)
-        }})...
-      </p>
+      <div>
+        Bruteforcing Steam IDs that match UIDs:
+        <ul>
+          <li v-for="uidInput in playerUidInputs" :key="uidInput.uid">{{ uidInput.uid }}</li>
+        </ul>
+      </div>
       <p>This process may take a while. Please be patient.</p>
       <p v-if="bruteforceStopTime == null">
         Elapsed time: {{ Date.now() - bruteforceStartTime }}ms
@@ -349,8 +374,11 @@ const resetState = () => {
       <p v-else>Time taken: {{ bruteforceStopTime - bruteforceStartTime }}ms</p>
       <h3>Found Steam IDs</h3>
       <ul>
-        <li v-for="steamId in foundSteamIds" :key="steamId">
-          <a :href="getSteamProfileUrl(steamId)">{{ steamAccountIdToString(steamId) }}</a>
+        <li v-for="steamId in foundSteamIds" :key="steamId.accountId">
+          <a :href="getSteamProfileUrl(steamId.accountId)">{{
+            steamAccountIdToString(steamId.accountId)
+          }}</a>
+          > {{ steamId.targetHash.toString(16).toUpperCase() }}
         </li>
       </ul>
       <h3>Status</h3>
@@ -388,5 +416,13 @@ input {
 
 input:invalid {
   border-color: red;
+}
+.uid-input-container {
+  display: flex;
+  align-items: center;
+}
+
+.remove-button {
+  margin-left: 10px;
 }
 </style>

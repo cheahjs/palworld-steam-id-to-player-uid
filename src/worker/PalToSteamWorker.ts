@@ -12,10 +12,10 @@ const steamAccountIdToBuf = (accountId: number) => {
 const reportEvery = 50000
 
 onmessage = (event) => {
-  const target: number = event.data.target
+  const targets: number[] = event.data.targets
   const start: number = event.data.start
   const end: number = event.data.end
-  console.log('worker start', start, end, target)
+  console.log('worker start', start, end, targets)
   for (let i = start; i < end; i++) {
     if ((i - start) % reportEvery === 0) {
       postMessage({
@@ -27,10 +27,12 @@ onmessage = (event) => {
         }
       })
     }
-    if (steamIdToPlayerUid(steamAccountIdToBuf(i)) === target) {
+    const uid = steamIdToPlayerUid(steamAccountIdToBuf(i))
+    if (targets.includes(uid)) {
       postMessage({
         type: 'found',
-        accountId: i
+        accountId: i,
+        uid: uid
       })
     }
   }

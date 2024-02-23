@@ -3,9 +3,11 @@ onmessage = (e) => {
   const start: number = e.data.start
   const end: number = e.data.end
   for (let idIdx = start; idIdx < end; idIdx++) {
-    if (resultBuffer[idIdx - start] != 0) {
+    const result = resultBuffer[idIdx - start]
+    if (result != 0) {
       postMessage({
-        account_id: idIdx
+        account_id: idIdx,
+        hash: result
       })
     }
   }

@@ -1,5 +1,5 @@
 @group(0) @binding(0) var<storage, read_write> output_result: array<u32>;
-@group(0) @binding(1) var<uniform> target_hash: u32;
+@group(0) @binding(1) var<storage> target_hashes: array<u32>;
 @group(0) @binding(2) var<uniform> start_account_id: u32;
 @group(0) @binding(3) var<storage, read_write> signal_output: u32;
 
@@ -64,11 +64,15 @@ fn main(
     // Perform Unreal's compression
     let hash: u32 = result.x + (result.y * 23);
 
-    // Check if the hash is the target
-    let init_bit: u32 = select(0u, 1u, hash == target_hash);
-    output_result[i] = init_bit;
-    if (init_bit == 1u) {
-        signal_output = 1u;
+    // Check if the hash is any of the targets
+    let target_length = arrayLength(&target_hashes);
+    output_result[i] = 0u;
+    for (var j = 0u; j < target_length; j += 1u) {
+        let target_hash = target_hashes[j];
+        if (hash == target_hash) {
+            output_result[i] = hash;
+            signal_output = 1u;
+        }
     }
 }
 
