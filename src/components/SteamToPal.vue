@@ -39,7 +39,11 @@ watch(steamId, async (newVal, _oldVal) => {
   <div>
     <h2>Convert Steam ID to Palworld Player UID</h2>
     <label class="label">Steam ID</label>
-    <input v-model="steamId" type="text" placeholder="Enter your Steam ID" /><br />
+    <input
+      v-model="steamId"
+      type="text"
+      placeholder="Enter your Steam ID, eg 76561197960287930"
+    /><br />
     <pre v-if="steamId">
 Steam ID: {{ steamId }}
 Palworld Player UID (Hex - Save Files): {{ playerUid.toString(16).toUpperCase() }}
@@ -51,9 +55,14 @@ Palworld Player UID (Decimal - RCON): {{ noSteamPlayerUid }}</pre
     >
     <p>What is the No Steam UID?</p>
     <p>
-      In the event the Steam system is not available, for example if <code>-nosteam</code> is used
-      or if the Steam client (either the desktop client or SteamCMD) is not available, Palworld uses
-      a different algorithm for player UIDs.
+      In the event the
+      <a
+        href="https://docs.unrealengine.com/5.1/en-US/online-subsystem-steam-interface-in-unreal-engine/"
+        >Steam Online Subsystem</a
+      >
+      is not available, for example if <code>-nosteam</code> is used or if the Steam client is not
+      running on Windows or if the <code>steamclient.so</code> library is not available on Linux,
+      Palworld uses a different algorithm for player UIDs.
     </p>
   </div>
 </template>
