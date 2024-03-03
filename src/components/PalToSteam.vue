@@ -1,18 +1,25 @@
 <script setup lang="ts">
 import { ref } from 'vue'
 import type { Ref } from 'vue'
+import { parse, isInteger } from 'lossless-json'
 import BruteforceWorker from '../worker/PalToSteamWorker?worker'
 import WebGPUResultWorker from '../worker/WebGPUResultWorker?worker'
 import computeShaderString from './compute_shader.wgsl?raw'
 
 const playerUidInputs = ref([{ uid: '' }])
 const bruteforcing = ref(false)
-const bruteforceMethod = ref('webgpu')
+const bruteforceMethod = ref('lookup')
 const webgpuAvailable = !!navigator.gpu
 const threadsAvailable = navigator.hardwareConcurrency
 const webworkersThreadCount = ref(threadsAvailable)
 const webworkersProgress = ref([{ current: 0, start: 0, end: 0 }])
 const foundSteamIds = ref([
+  {
+    accountId: 0,
+    targetHash: 0
+  }
+])
+const foundNoSteamIds = ref([
   {
     accountId: 0,
     targetHash: 0
@@ -27,6 +34,14 @@ const steamAccountIdToString = (accountId: number) => {
   return (BigInt(accountId) + 76561197960265728n).toString()
 }
 
+const steamIdToAccountId = (steamId: bigint) => {
+  return Number(steamId - 76561197960265728n)
+}
+
+function customNumberParser(value: string) {
+  return isInteger(value) ? BigInt(value) : parseFloat(value)
+}
+
 const playerUidToSteamId = async () => {
   resetState()
   console.log('Brute forcing player UID to Steam ID', playerUidInputs)
@@ -37,6 +52,40 @@ const playerUidToSteamId = async () => {
     await webgpuBruteForce(targets)
   } else if (bruteforceMethod.value == 'webworkers') {
     await webworkerBruteForce(targets)
+  } else if (bruteforceMethod.value == 'lookup') {
+    await lookupUids(targets)
+  }
+}
+
+interface UidLookupResult {
+  steam: bigint[]
+  no_steam: bigint[]
+}
+
+const lookupUids = async (targets: number[]) => {
+  for (let target of targets) {
+    // Not for general use - use of this API will be subject to strict bot detection if abused
+    const response = await fetch(`/uidlookup?uid=${target}`, {
+      method: 'GET',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    })
+
+    const rawData = await response.text()
+    const data = parse(rawData, customNumberParser) as UidLookupResult
+    for (let steamId of data.steam) {
+      foundSteamIds.value.push({
+        accountId: steamIdToAccountId(steamId),
+        targetHash: target
+      })
+    }
+    for (let steamId of data.no_steam) {
+      foundNoSteamIds.value.push({
+        accountId: steamIdToAccountId(steamId),
+        targetHash: target
+      })
+    }
   }
 }
 
@@ -303,6 +352,7 @@ const getSteamProfileUrl = (accountId: number) => {
 const resetState = () => {
   bruteforcing.value = false
   foundSteamIds.value = []
+  foundNoSteamIds.value = []
   webworkersProgress.value = []
   webgpuProgress.value = { current: 0, start: 0, end: 0 }
   bruteforceStopTime.value = null
@@ -347,6 +397,7 @@ const removeUid = (index: number) => {
       </div>
       <label class="label">Bruteforce method</label>
       <select v-model="bruteforceMethod">
+        <option value="lookup" selected>Database Lookup</option>
         <option v-if="webgpuAvailable" value="webgpu">WebGPU (GPU)</option>
         <option value="webworkers">Web Workers (CPU)</option></select
       ><br />
@@ -361,50 +412,81 @@ const removeUid = (index: number) => {
       <button type="submit">Convert</button>
     </form>
     <div v-else>
-      <div>
-        Bruteforcing Steam IDs that match UIDs:
+      <div v-if="bruteforceMethod == 'lookup'">
+        <div>
+          Database is provided on a best-effort basis, it may not always be available. Use GPU or
+          CPU brute-force methods if lookup fails.
+        </div>
+        <div>
+          Looking up Steam IDs that match UIDs in the database:
+          <ul>
+            <li v-for="uidInput in playerUidInputs" :key="uidInput.uid">{{ uidInput.uid }}</li>
+          </ul>
+        </div>
+        <h3>Found Steam IDs</h3>
         <ul>
-          <li v-for="uidInput in playerUidInputs" :key="uidInput.uid">{{ uidInput.uid }}</li>
+          <li v-for="steamId in foundSteamIds" :key="steamId.accountId">
+            <a :href="getSteamProfileUrl(steamId.accountId)">{{
+              steamAccountIdToString(steamId.accountId)
+            }}</a>
+            > Steam UID: {{ steamId.targetHash.toString(16).toUpperCase() }}
+          </li>
+        </ul>
+        <ul>
+          <li v-for="steamId in foundNoSteamIds" :key="steamId.accountId">
+            <a :href="getSteamProfileUrl(steamId.accountId)">{{
+              steamAccountIdToString(steamId.accountId)
+            }}</a>
+            > No Steam UID: {{ steamId.targetHash.toString(16).toUpperCase() }}
+          </li>
         </ul>
       </div>
-      <p>This process may take a while. Please be patient.</p>
-      <p v-if="bruteforceStopTime == null">
-        Elapsed time: {{ Date.now() - bruteforceStartTime }}ms
-      </p>
-      <p v-else>Time taken: {{ bruteforceStopTime - bruteforceStartTime }}ms</p>
-      <h3>Found Steam IDs</h3>
-      <ul>
-        <li v-for="steamId in foundSteamIds" :key="steamId.accountId">
-          <a :href="getSteamProfileUrl(steamId.accountId)">{{
-            steamAccountIdToString(steamId.accountId)
-          }}</a>
-          > {{ steamId.targetHash.toString(16).toUpperCase() }}
-        </li>
-      </ul>
-      <h3>Status</h3>
-      <ul v-if="bruteforceMethod == 'webworkers'">
-        <li v-for="progress in webworkersProgress" :key="progress.start">
-          {{ progress.current - progress.start }}/{{ progress.end - progress.start }} ({{
+      <div v-else>
+        <div>
+          Bruteforcing Steam IDs that match UIDs:
+          <ul>
+            <li v-for="uidInput in playerUidInputs" :key="uidInput.uid">{{ uidInput.uid }}</li>
+          </ul>
+        </div>
+        <p>This process may take a while. Please be patient.</p>
+        <p v-if="bruteforceStopTime == null">
+          Elapsed time: {{ Date.now() - bruteforceStartTime }}ms
+        </p>
+        <p v-else>Time taken: {{ bruteforceStopTime - bruteforceStartTime }}ms</p>
+        <h3>Found Steam IDs</h3>
+        <ul>
+          <li v-for="steamId in foundSteamIds" :key="steamId.accountId">
+            <a :href="getSteamProfileUrl(steamId.accountId)">{{
+              steamAccountIdToString(steamId.accountId)
+            }}</a>
+            > {{ steamId.targetHash.toString(16).toUpperCase() }}
+          </li>
+        </ul>
+        <h3>Status</h3>
+        <ul v-if="bruteforceMethod == 'webworkers'">
+          <li v-for="progress in webworkersProgress" :key="progress.start">
+            {{ progress.current - progress.start }}/{{ progress.end - progress.start }} ({{
+              (
+                ((progress.current - progress.start) / (progress.end - progress.start)) *
+                100
+              ).toPrecision(5)
+            }}%) <progress max="100" :value="getProgressValue(progress)" />
+          </li>
+        </ul>
+        <p v-if="bruteforceMethod == 'webgpu'">Using GPU: {{ webgpuDeviceName }}</p>
+        <p v-if="bruteforceMethod == 'webgpu'">
+          {{ webgpuProgress.current - webgpuProgress.start }}/{{
+            webgpuProgress.end - webgpuProgress.start
+          }}
+          ({{
             (
-              ((progress.current - progress.start) / (progress.end - progress.start)) *
+              ((webgpuProgress.current - webgpuProgress.start) /
+                (webgpuProgress.end - webgpuProgress.start)) *
               100
             ).toPrecision(5)
-          }}%) <progress max="100" :value="getProgressValue(progress)" />
-        </li>
-      </ul>
-      <p v-if="bruteforceMethod == 'webgpu'">Using GPU: {{ webgpuDeviceName }}</p>
-      <p v-if="bruteforceMethod == 'webgpu'">
-        {{ webgpuProgress.current - webgpuProgress.start }}/{{
-          webgpuProgress.end - webgpuProgress.start
-        }}
-        ({{
-          (
-            ((webgpuProgress.current - webgpuProgress.start) /
-              (webgpuProgress.end - webgpuProgress.start)) *
-            100
-          ).toPrecision(5)
-        }}%) <progress max="100" :value="getProgressValue(webgpuProgress)" />
-      </p>
+          }}%) <progress max="100" :value="getProgressValue(webgpuProgress)" />
+        </p>
+      </div>
     </div>
   </div>
 </template>
