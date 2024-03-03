@@ -73,7 +73,7 @@ const lookupUids = async (targets: number[]) => {
     })
 
     const rawData = await response.text()
-    const data = parse(rawData, customNumberParser) as UidLookupResult
+    const data = parse(rawData, null, customNumberParser) as UidLookupResult
     for (let steamId of data.steam) {
       foundSteamIds.value.push({
         accountId: steamIdToAccountId(steamId),
