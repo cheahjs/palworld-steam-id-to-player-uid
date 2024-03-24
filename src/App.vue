@@ -8,16 +8,26 @@ import PalToSteam from './components/PalToSteam.vue'
     <h1>Palworld Steam&lt;&gt;Player UID Converter</h1>
   </header>
   <hr />
-  <div id="app">
-    <p>
-      This only works for servers that translate Steam IDs into Player UIDs. There are
-      configurations that convert a different ID which this tool does not currently support.
-    </p>
-    <SteamToPal />
-    <hr />
-    <PalToSteam />
-  </div>
+  <main>
+    <div id="app">
+      <p>
+        This only supports Steam-based servers, either co-op or dedicated.
+      </p>
+      <SteamToPal />
+      <hr />
+      <PalToSteam />
+    </div>
+  </main>
+  <hr/>
   <footer>
-    <p><a href="https://github.com/cheahjs/palworld-steam-id-to-player-uid">Source Code</a></p>
+    <p>Created by <a href="https://github.com/cheahjs">@cheahjs</a><br/>
+    <a href="https://github.com/cheahjs/palworld-steam-id-to-player-uid">Source Code</a></p>
   </footer>
 </template>
+
+<style scoped>
+footer {
+  text-align: center;
+  font-size: 0.85em;
+}
+</style>

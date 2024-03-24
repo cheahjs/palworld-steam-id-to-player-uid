@@ -30,6 +30,14 @@ const webgpuDeviceName = ref('')
 const bruteforceStartTime = ref(0)
 const bruteforceStopTime: Ref<number | null> = ref(null)
 
+interface LookupStatus {
+  [key: number]: {
+    loading: boolean
+    success: boolean
+  }
+}
+const lookupStatus: Ref<LookupStatus> = ref({})
+
 const steamAccountIdToString = (accountId: number) => {
   return (BigInt(accountId) + 76561197960265728n).toString()
 }
@@ -64,6 +72,9 @@ interface UidLookupResult {
 
 const lookupUids = async (targets: number[]) => {
   for (let target of targets) {
+    lookupStatus.value[target] = { loading: true, success: false }
+  }
+  for (let target of targets) {
     // Not for general use - use of this API will be subject to strict bot detection if abused
     const response = await fetch(`/uidlookup?uid=${target}`, {
       method: 'GET',
@@ -72,19 +83,31 @@ const lookupUids = async (targets: number[]) => {
       }
     })
 
-    const rawData = await response.text()
-    const data = parse(rawData, null, customNumberParser) as UidLookupResult
-    for (let steamId of data.steam) {
-      foundSteamIds.value.push({
-        accountId: steamIdToAccountId(steamId),
-        targetHash: target
-      })
+    if (!response.ok) {
+      console.error('Failed to lookup UID', target)
+      lookupStatus.value[target] = { loading: false, success: false }
+      continue
     }
-    for (let steamId of data.no_steam) {
-      foundNoSteamIds.value.push({
-        accountId: steamIdToAccountId(steamId),
-        targetHash: target
-      })
+
+    const rawData = await response.text()
+    try {
+      const data = parse(rawData, null, customNumberParser) as UidLookupResult
+      for (let steamId of data.steam) {
+        foundSteamIds.value.push({
+          accountId: steamIdToAccountId(steamId),
+          targetHash: target
+        })
+      }
+      for (let steamId of data.no_steam) {
+        foundNoSteamIds.value.push({
+          accountId: steamIdToAccountId(steamId),
+          targetHash: target
+        })
+      }
+      lookupStatus.value[target] = { loading: false, success: true }
+    } catch (error) {
+      console.error('Failed to parse UID lookup response', target, error)
+      lookupStatus.value[target] = { loading: false, success: false }
     }
   }
 }
@@ -356,6 +379,7 @@ const resetState = () => {
   webworkersProgress.value = []
   webgpuProgress.value = { current: 0, start: 0, end: 0 }
   bruteforceStopTime.value = null
+  lookupStatus.value = {}
 }
 
 const addUidField = () => {
@@ -375,8 +399,9 @@ const removeUid = (index: number) => {
       means that multiple different Steam IDs can map onto the same Palworld Player UID.
     </p>
     <p>
-      This only currently supports the regular Palworld Player UID, and not the No Steam UIDs that
-      are used when Steam is not available.
+      CPU and GPU bruteforce currently only supports the regular Palworld Player UID, and not the No
+      Steam UIDs that are used when Steam is not available. Database lookups support both Steam and
+      No Steam UIDs.
     </p>
     <form @submit.prevent="playerUidToSteamId" v-if="!bruteforcing">
       <button type="button" @click="addUidField()">Add more UIDs to search</button>
@@ -420,7 +445,24 @@ const removeUid = (index: number) => {
         <div>
           Looking up Steam IDs that match UIDs in the database:
           <ul>
-            <li v-for="uidInput in playerUidInputs" :key="uidInput.uid">{{ uidInput.uid }}</li>
+            <li v-for="uidInput in playerUidInputs" :key="uidInput.uid">
+              {{ uidInput.uid }}:
+              <span v-if="lookupStatus[parseInt(uidInput.uid, 16)].loading">Looking up</span>
+              <span
+                v-if="
+                  !lookupStatus[parseInt(uidInput.uid, 16)].loading &&
+                  lookupStatus[parseInt(uidInput.uid, 16)].success
+                "
+                >Lookup succeeded</span
+              >
+              <span
+                v-if="
+                  !lookupStatus[parseInt(uidInput.uid, 16)].loading &&
+                  !lookupStatus[parseInt(uidInput.uid, 16)].success
+                "
+                >Lookup failed</span
+              >
+            </li>
           </ul>
         </div>
         <h3>Found Steam IDs</h3>
